@@ -77,3 +77,9 @@ def queue_list_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(f"🗑 {label}", callback_data=f"cancel_queue:{qid}")])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
+
+
+def setup_target_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 Cancel Setup", callback_data="conv_cancel")],
+    ])

@@ -3,3 +3,4 @@ pyrogram>=2.0
 python-dotenv>=1.0
 aiosqlite>=0.19
 loguru>=0.7
+tgcrypto>=1.2

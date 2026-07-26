@@ -27,12 +27,12 @@ from bot.handlers import (
     SET_SOURCE,
     SET_TAG,
     SET_ADMIN,
+    SETUP_TARGET,
+    SETUP_SOURCE,
+    SETUP_ADMIN,
     start_command,
-    set_target_entry,
     set_target_save,
-    add_source_entry,
     add_source_save,
-    set_tag_entry,
     set_tag_save,
     add_admin_save,
     menu_status,
@@ -53,11 +53,13 @@ from bot.handlers import (
     preview_send_now,
     preview_reject,
     cancel_queue_cb,
+    setup_target_save,
+    setup_source_save,
+    setup_admin_save,
 )
 from bot.keyboards import preview_keyboard
 
 pyrogram_client = PyrogramClient()
-queue_worker = QueueWorker(pyrogram_client.client)
 
 
 def make_send_preview(bot: Bot):
@@ -113,6 +115,25 @@ def build_app() -> Application:
         CallbackQueryHandler(conv_cancel_callback, pattern=r"^conv_cancel$"),
     ]
 
+    setup_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start_command),
+        ],
+        states={
+            SETUP_TARGET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_target_save),
+            ],
+            SETUP_SOURCE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_source_save),
+            ],
+            SETUP_ADMIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_admin_save),
+            ],
+        },
+        fallbacks=conv_fallbacks,
+        allow_reentry=True,
+    )
+
     target_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(menu_target, pattern=r"^menu_target$"),
@@ -165,7 +186,7 @@ def build_app() -> Application:
         allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(setup_handler)
 
     app.add_handler(target_handler)
     app.add_handler(source_handler)
@@ -200,26 +221,21 @@ async def main():
             await add_admin(uid)
         logger.info("Populated admins from .env: {}", settings.ADMIN_IDS)
 
-    try:
-        await pyrogram_client.start()
-        logger.info("Pyrogram client connected")
-    except Exception:
-        logger.warning("Pyrogram failed to connect. SourceWatcher disabled.")
-
     app = build_app()
-    send_preview = make_send_preview(app.bot)
-    handlers.pyrogram_client = pyrogram_client
-
-    if pyrogram_client.watcher is None and pyrogram_client.client.is_connected:
-        from core.pyrogram_client import SourceWatcher
-        pyrogram_client.watcher = SourceWatcher(pyrogram_client.client, send_preview)
-        await pyrogram_client.watcher.start()
-
-    logger.info("Bot polling starting...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
 
+    send_preview = make_send_preview(app.bot)
+    handlers.pyrogram_client = pyrogram_client
+
+    try:
+        await pyrogram_client.start(send_preview=send_preview)
+        logger.info("Pyrogram client connected")
+    except Exception:
+        logger.warning("Pyrogram failed to connect. SourceWatcher disabled.")
+
+    queue_worker = QueueWorker(pyrogram_client.client)
     await queue_worker.start()
 
     logger.info("Bot is running. Press Ctrl+C to stop.")

@@ -1,8 +1,6 @@
 import asyncio
 from typing import Callable, Awaitable
 
-from pathlib import Path
-
 import core.pyrogram_patch  # noqa: F401
 
 from pyrogram import Client
@@ -148,14 +146,13 @@ class PyrogramClient:
             phone_number=settings.PHONE_NUMBER,
         )
         self.watcher: SourceWatcher | None = None
+        self._send_preview: Callable[..., Awaitable] | None = None
         self._reconnect_task: asyncio.Task | None = None
 
     async def start(self, send_preview: Callable[..., Awaitable] | None = None):
         logger.info("Starting Pyrogram client...")
+        self._send_preview = send_preview
         await self._connect_with_retry()
-        if send_preview:
-            self.watcher = SourceWatcher(self.client, send_preview)
-            await self.watcher.start()
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def stop(self):
@@ -181,14 +178,26 @@ class PyrogramClient:
                 await self.client.start()
                 logger.info("Pyrogram client connected")
                 await self._cache_peers()
+                await self._start_watcher()
                 return
             except Exception:
                 if attempt < max_retries:
-                    logger.warning("Pyrogram connect failed (attempt {}/{}), retrying in {}s", attempt, max_retries, RECONNECT_INTERVAL)
+                    logger.warning(
+                        "Pyrogram connect failed (attempt {}/{}), retrying in {}s",
+                        attempt, max_retries, RECONNECT_INTERVAL,
+                    )
                     await asyncio.sleep(RECONNECT_INTERVAL)
                 else:
-                    logger.error("Pyrogram connect failed after {} attempts. Run 'python login.py' on a machine with a terminal to authenticate, then copy the .session file to this server.", max_retries)
-                    return
+                    logger.error(
+                        "Pyrogram connect failed after {} attempts. "
+                        "Run 'python login.py' to authenticate, then copy the .session file.",
+                        max_retries,
+                    )
+
+    async def _start_watcher(self):
+        if self.watcher is None and self._send_preview:
+            self.watcher = SourceWatcher(self.client, self._send_preview)
+            await self.watcher.start()
 
     async def _cache_peers(self):
         try:

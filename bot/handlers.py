@@ -29,6 +29,7 @@ from core.database import (
     cancel_queue_item,
     count_pending,
     get_recent_actions,
+    is_setup_complete,
 )
 from utils.cleaner import clean_and_tag
 from bot.keyboards import (
@@ -39,11 +40,12 @@ from bot.keyboards import (
     preview_keyboard,
     queue_list_keyboard,
     cancel_keyboard,
+    setup_target_keyboard,
 )
 
 pyrogram_client = None
 
-SET_TARGET, SET_SOURCE, SET_TAG, SET_ADMIN = range(4)
+SET_TARGET, SET_SOURCE, SET_TAG, SET_ADMIN, SETUP_TARGET, SETUP_SOURCE, SETUP_ADMIN = range(7)
 
 
 def is_admin(user_id: int) -> bool:
@@ -53,10 +55,14 @@ def is_admin(user_id: int) -> bool:
 # ── /start ──────────────────────────────────────────────────────────
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     if not is_admin(user.id):
         return
+
+    setup_done = await is_setup_complete()
+    if not setup_done:
+        return await _start_setup(update, context)
 
     target = await get_setting("target_channel") or "Not set"
     sources = await get_source_channels()
@@ -75,19 +81,72 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Use the menu below to manage the bot."
     )
     await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
+
+
+# ── Initial Setup Flow ──────────────────────────────────────────────
+
+
+async def _start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "👋 Welcome! Let's set up your bot.\n\n"
+        "Step 1/3: Send the **Target Channel** (username or ID)\n"
+        "where approved messages will be posted.",
+        reply_markup=setup_target_keyboard(),
+    )
+    return SETUP_TARGET
+
+
+async def setup_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    await set_setting("target_channel", text)
+    await log_action(update.effective_user.id, f"setup_target:{text}")
+    await update.message.reply_text(
+        f"✅ Target set to: {text}\n\n"
+        "Step 2/3: Send a **Source Channel** (username or ID)\n"
+        "You can add more later from the menu.",
+    )
+    return SETUP_SOURCE
+
+
+async def setup_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    await add_source_channel(text)
+    await log_action(update.effective_user.id, f"setup_source:{text}")
+    await update.message.reply_text(
+        f"✅ Source added: {text}\n\n"
+        "Step 3/3: Send an **Admin User ID** to manage the bot.\n"
+        "You can add more later from the menu.",
+    )
+    return SETUP_ADMIN
+
+
+async def setup_admin_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    try:
+        uid = int(text)
+    except ValueError:
+        await update.message.reply_text("❌ Invalid ID. Send a numeric User ID or /cancel.")
+        return SETUP_ADMIN
+    await add_admin(uid)
+    await set_setting("setup_complete", "true")
+    await log_action(update.effective_user.id, f"setup_admin:{uid}")
+    await update.message.reply_text(
+        "✅ Setup complete!\n\n"
+        "The bot is now monitoring your source channels.\n"
+        "Use /start to open the main menu.",
+        reply_markup=back_to_menu_keyboard(),
+    )
+    return ConversationHandler.END
 
 
 # ── Target conversation ─────────────────────────────────────────────
-
-
-async def set_target_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    current = await get_setting("target_channel") or "Not set"
-    await update.message.reply_text(
-        f"Current target: {current}\n\nSend the new Target Channel (username or ID)."
-    )
-    return SET_TARGET
 
 
 async def menu_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -120,13 +179,6 @@ async def set_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ── Source conversation ─────────────────────────────────────────────
 
 
-async def add_source_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    await update.message.reply_text("Send the Source Channel (username or ID).")
-    return SET_SOURCE
-
-
 async def menu_add_source_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -154,16 +206,6 @@ async def add_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ── Tag conversation ────────────────────────────────────────────────
-
-
-async def set_tag_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    current = await get_setting("custom_tag") or "Not set"
-    await update.message.reply_text(
-        f"Current tag:\n{current}\n\nSend the new custom tag."
-    )
-    return SET_TAG
 
 
 async def menu_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -247,7 +289,6 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     tag = await get_setting("custom_tag") or "Not set"
     queue_items = await get_active_queue_items()
     pending_count = await count_pending()
-    actions = await get_recent_actions(5)
 
     next_post = "N/A"
     if queue_items:
@@ -268,11 +309,6 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"⏰ Next post: {next_post}\n"
         f"📨 Pending: {pending_count}\n"
     )
-
-    if actions:
-        text += "\n📜 Recent actions:\n"
-        for a in actions:
-            text += f"  • {a['action']} (admin {a['admin_id']})\n"
 
     await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
 
@@ -348,10 +384,12 @@ async def menu_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    tag = await get_setting("custom_tag") or "Not set"
     await query.edit_message_text(
         "⚙️ Settings\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "No settings available yet.",
+        f"📝 Custom Tag:\n{tag}\n\n"
+        "Use the menu to change settings.",
         reply_markup=back_to_menu_keyboard(),
     )
 
@@ -432,6 +470,7 @@ async def conv_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ── Preview action callbacks ────────────────────────────────────────
 
+
 ACTION_LABELS = {
     "queued": "Added to Queue",
     "sent": "Sent Now",
@@ -439,47 +478,27 @@ ACTION_LABELS = {
 }
 
 
-async def _handle_preview_action(
-    update: Update,
-    pending_id: int,
-    action: str,
-):
+async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
-    acting_label = ACTION_LABELS.get(action, action)
+    pending_id = int(query.data.split(":")[1])
 
     pending = await get_pending_by_id(pending_id)
     if not pending:
         await query.answer("Message not found.", show_alert=True)
         return
 
-    previous_acted_by = pending.get("acted_by")
-
-    if previous_acted_by and previous_acted_by != user.id:
-        await query.answer(
-            f"This message was already {ACTION_LABELS.get(pending.get('status', ''), pending.get('status', 'acted on'))} by another admin.",
-            show_alert=True,
-        )
-        return
-
-    await update_pending_status(pending_id, action, acted_by=user.id)
-    await log_action(user.id, f"{action}:{pending_id}")
-
-    await query.edit_message_reply_markup(reply_markup=None)
-    await query.message.reply_text(
-        f"Message #{pending_id}: {acting_label} by you."
-    )
-
-
-async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    pending_id = int(query.data.split(":")[1])
-
-    await _handle_preview_action(update, pending_id, "queued")
+    previous_status = pending.get("status")
+    if previous_status in ("queued", "sent", "rejected"):
+        acted_by = pending.get("acted_by")
+        if acted_by and acted_by != user.id:
+            await query.answer(
+                f"This message was already {ACTION_LABELS.get(previous_status, previous_status)} by another admin.",
+                show_alert=True,
+            )
+            return
 
     last_time = await get_last_queue_time()
-
     if last_time:
         try:
             base = datetime.fromisoformat(last_time)
@@ -491,15 +510,15 @@ async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     scheduled = base + timedelta(hours=2, minutes=30)
     scheduled_str = scheduled.isoformat()
 
-    await add_to_queue(pending_id, scheduled_str, user.id)
+    queue_id = await add_to_queue(pending_id, scheduled_str, user.id)
+    await update_pending_status(pending_id, "queued", acted_by=user.id)
     await log_action(user.id, f"queue_scheduled:{pending_id}:{scheduled_str}")
 
-    try:
-        await query.message.reply_text(
-            f"Scheduled for: {scheduled.strftime('%Y-%m-%d %H:%M UTC')}"
-        )
-    except Exception:
-        pass
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        f"Message #{pending_id}: Added to Queue by you.\n"
+        f"⏰ Scheduled for: {scheduled.strftime('%Y-%m-%d %H:%M UTC')}"
+    )
 
 
 async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -512,11 +531,19 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer("Message not found.", show_alert=True)
         return
 
-    await _handle_preview_action(update, pending_id, "sent")
+    previous_status = pending.get("status")
+    if previous_status in ("queued", "sent", "rejected"):
+        acted_by = pending.get("acted_by")
+        if acted_by and acted_by != user.id:
+            await query.answer(
+                f"This message was already {ACTION_LABELS.get(previous_status, previous_status)} by another admin.",
+                show_alert=True,
+            )
+            return
 
     target = await get_setting("target_channel")
     if not target:
-        await query.message.reply_text("Error: No target channel configured.")
+        await query.answer("No target channel configured.", show_alert=True)
         return
 
     tag = await get_setting("custom_tag")
@@ -551,18 +578,49 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await pyrogram_client.client.send_message(
                     chat_id=target, text=text
                 )
-            await query.message.reply_text(f"Sent to {target}.")
+
+            await update_pending_status(pending_id, "sent", acted_by=user.id)
+            await log_action(user.id, f"send_now:{pending_id}")
+
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text(
+                f"Message #{pending_id}: Sent Now by you.\n"
+                f"Delivered to: {target}"
+            )
         else:
-            await query.message.reply_text("Error: Pyrogram client not available.")
+            await query.answer("Pyrogram client not available.", show_alert=True)
     except Exception:
         logger.exception("Failed to forward message #{}", pending_id)
-        await query.message.reply_text("Error: Failed to forward message.")
+        await query.answer("Failed to forward message.", show_alert=True)
 
 
 async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+    user = update.effective_user
     pending_id = int(query.data.split(":")[1])
-    await _handle_preview_action(update, pending_id, "rejected")
+
+    pending = await get_pending_by_id(pending_id)
+    if not pending:
+        await query.answer("Message not found.", show_alert=True)
+        return
+
+    previous_status = pending.get("status")
+    if previous_status in ("queued", "sent", "rejected"):
+        acted_by = pending.get("acted_by")
+        if acted_by and acted_by != user.id:
+            await query.answer(
+                f"This message was already {ACTION_LABELS.get(previous_status, previous_status)} by another admin.",
+                show_alert=True,
+            )
+            return
+
+    await update_pending_status(pending_id, "rejected", acted_by=user.id)
+    await log_action(user.id, f"reject:{pending_id}")
+
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        f"Message #{pending_id}: Rejected by you."
+    )
 
 
 async def cancel_queue_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
