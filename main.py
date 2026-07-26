@@ -19,6 +19,7 @@ from config import settings
 from utils.logger import setup_logger
 from core.database import get_db, close_db, get_admins, get_setting
 from core.pyrogram_client import PyrogramClient
+import bot.handlers as handlers
 from bot.handlers import (
     SETUP_TARGET,
     SETUP_SOURCE,
@@ -223,6 +224,7 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     send_preview = make_send_preview(app.bot)
+    handlers.pyrogram_client = pyrogram_client
     await pyrogram_client.start(send_preview)
 
     logger.info("Bot is running. Press Ctrl+C to stop.")

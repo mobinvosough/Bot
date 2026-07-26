@@ -23,6 +23,9 @@ from core.database import (
     log_action,
     get_pending_by_id,
     update_pending_status,
+    get_last_queue_time,
+    add_to_queue,
+    get_admin_username,
 )
 from bot.keyboards import (
     main_menu_keyboard,
@@ -33,6 +36,8 @@ from bot.keyboards import (
     back_to_menu_keyboard,
     preview_keyboard,
 )
+
+pyrogram_client = None
 
 (
     SETUP_TARGET,
@@ -360,31 +365,172 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 # ── Preview action callbacks ────────────────────────────────────────
 
+ACTION_LABELS = {
+    "queued": "Added to Queue",
+    "sent": "Sent Now",
+    "rejected": "Rejected",
+}
+
+
+async def _get_action_claimer(pending_id: int) -> int | None:
+    pending = await get_pending_by_id(pending_id)
+    if pending and pending.get("acted_by"):
+        return pending["acted_by"]
+    return None
+
+
+async def _notify_other_admins(
+    bot: Bot,
+    acting_user_id: int,
+    pending_id: int,
+    action: str,
+):
+    admins = await get_admins()
+    acting_name = await get_admin_username(acting_user_id)
+    label = ACTION_LABELS.get(action, action)
+    for admin in admins:
+        uid = admin["user_id"]
+        if uid == acting_user_id:
+            continue
+        try:
+            await bot.send_message(
+                chat_id=uid,
+                text=f"Message #{pending_id} was {label} by {acting_name}.",
+            )
+        except Exception:
+            logger.exception("Failed to notify admin {}", uid)
+
+
+async def _handle_preview_action(
+    update: Update,
+    pending_id: int,
+    action: str,
+):
+    query = update.callback_query
+    user = update.effective_user
+    acting_label = ACTION_LABELS.get(action, action)
+
+    pending = await get_pending_by_id(pending_id)
+    if not pending:
+        await query.answer("Message not found.", show_alert=True)
+        return
+
+    previous_acted_by = pending.get("acted_by")
+
+    if previous_acted_by and previous_acted_by != user.id:
+        prev_name = await get_admin_username(previous_acted_by)
+        prev_action = pending.get("status", "unknown")
+        prev_label = ACTION_LABELS.get(prev_action, prev_action)
+        await query.answer(
+            f"This message was already {prev_label} by {prev_name}. "
+            f"Your action ({acting_label}) will override.",
+            show_alert=True,
+        )
+
+    await update_pending_status(pending_id, action, acted_by=user.id)
+    await log_action(user.id, f"{action}:{pending_id}")
+
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        f"Message #{pending_id}: {acting_label} by you."
+    )
+
+    await _notify_other_admins(query.bot, user.id, pending_id, action)
+
+
 async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    user = update.effective_user
     pending_id = int(query.data.split(":")[1])
-    await update_pending_status(pending_id, "queued")
-    await log_action(update.effective_user.id, f"queued:{pending_id}")
-    await query.edit_message_reply_markup(reply_markup=None)
-    await query.message.reply_text(f"Message #{pending_id} added to queue.")
+
+    await _handle_preview_action(update, pending_id, "queued")
+
+    last_time = await get_last_queue_time()
+    from datetime import datetime, timedelta
+
+    if last_time:
+        try:
+            base = datetime.fromisoformat(last_time)
+        except ValueError:
+            base = datetime.utcnow()
+    else:
+        base = datetime.utcnow()
+
+    scheduled = base + timedelta(hours=2, minutes=30)
+    scheduled_str = scheduled.isoformat()
+
+    await add_to_queue(pending_id, scheduled_str, user.id)
+    await log_action(user.id, f"queue_scheduled:{pending_id}:{scheduled_str}")
+
+    try:
+        await query.message.reply_text(
+            f"Scheduled for: {scheduled.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
+    except Exception:
+        pass
 
 
 async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    user = update.effective_user
     pending_id = int(query.data.split(":")[1])
-    await update_pending_status(pending_id, "sent")
-    await log_action(update.effective_user.id, f"sent_now:{pending_id}")
-    await query.edit_message_reply_markup(reply_markup=None)
-    await query.message.reply_text(f"Message #{pending_id} marked for immediate send.")
+
+    pending = await get_pending_by_id(pending_id)
+    if not pending:
+        await query.answer("Message not found.", show_alert=True)
+        return
+
+    await _handle_preview_action(update, pending_id, "sent")
+
+    target = await get_setting("target_channel")
+    if not target:
+        await query.message.reply_text("Error: No target channel configured.")
+        return
+
+    tag = await get_setting("custom_tag") or ""
+    text = pending.get("text_or_caption") or ""
+    if tag:
+        text = f"{text}\n\n{tag}" if text else tag
+
+    content_type = pending.get("content_type", "Text")
+    media_id = pending.get("media_file_id")
+    source_chat = pending.get("source_channel")
+    msg_id = pending.get("message_id")
+
+    try:
+        if pyrogram_client and pyrogram_client.client:
+            if content_type == "Photo" and media_id:
+                await pyrogram_client.client.send_photo(
+                    chat_id=target,
+                    photo=media_id,
+                    caption=text,
+                )
+            elif content_type == "Video" and media_id:
+                await pyrogram_client.client.send_video(
+                    chat_id=target,
+                    video=media_id,
+                    caption=text,
+                )
+            elif source_chat and msg_id:
+                await pyrogram_client.client.copy_message(
+                    chat_id=target,
+                    from_chat_id=int(source_chat) if source_chat.lstrip("-").isdigit() else source_chat,
+                    message_id=msg_id,
+                )
+            else:
+                await pyrogram_client.client.send_message(
+                    chat_id=target,
+                    text=text,
+                )
+            await query.message.reply_text(f"Sent to {target}.")
+        else:
+            await query.message.reply_text("Error: Pyrogram client not available.")
+    except Exception:
+        logger.exception("Failed to forward message #{}", pending_id)
+        await query.message.reply_text("Error: Failed to forward message.")
 
 
 async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     pending_id = int(query.data.split(":")[1])
-    await update_pending_status(pending_id, "rejected")
-    await log_action(update.effective_user.id, f"rejected:{pending_id}")
-    await query.edit_message_reply_markup(reply_markup=None)
-    await query.message.reply_text(f"Message #{pending_id} rejected.")
+    await _handle_preview_action(update, pending_id, "rejected")

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     text_or_caption TEXT,
     media_file_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
+    acted_by INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -191,3 +192,48 @@ async def get_pending_by_id(pending_id: int) -> dict | None:
     )
     row = await cursor.fetchone()
     return dict(row) if row else None
+
+
+async def update_pending_status(pending_id: int, status: str, acted_by: int | None = None):
+    db = await get_db()
+    if acted_by is not None:
+        await db.execute(
+            "UPDATE pending_messages SET status = ?, acted_by = ? WHERE id = ?",
+            (status, acted_by, pending_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE pending_messages SET status = ? WHERE id = ?",
+            (status, pending_id),
+        )
+    await db.commit()
+
+
+async def get_last_queue_time() -> str | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT scheduled_time FROM queue ORDER BY id DESC LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    return row["scheduled_time"] if row else None
+
+
+async def add_to_queue(pending_id: int, scheduled_time: str, added_by: int) -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO queue (pending_id, scheduled_time, added_by) VALUES (?, ?, ?)",
+        (pending_id, scheduled_time, added_by),
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+async def get_admin_username(user_id: int) -> str:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT username FROM admins WHERE user_id = ?", (user_id,)
+    )
+    row = await cursor.fetchone()
+    if row and row["username"]:
+        return f"@{row['username']}"
+    return str(user_id)
