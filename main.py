@@ -1,9 +1,20 @@
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT_DIR = Path(__file__).parent
+sys.path.insert(0, str(ROOT_DIR))
+
+RUN_BOT = "--run-bot" in sys.argv
+
+if not RUN_BOT:
+    from menu import main as menu_main
+    menu_main()
+    sys.exit(0)
+
+PID_FILE = ROOT_DIR / "bot.pid"
 
 from telegram import Bot
 from telegram.ext import (
@@ -60,6 +71,14 @@ from bot.handlers import (
 from bot.keyboards import preview_keyboard
 
 pyrogram_client = PyrogramClient()
+
+
+def write_pid():
+    PID_FILE.write_text(str(os.getpid()))
+
+
+def remove_pid():
+    PID_FILE.unlink(missing_ok=True)
 
 
 def make_send_preview(bot: Bot):
@@ -211,7 +230,8 @@ def build_app() -> Application:
 
 async def main():
     setup_logger()
-    logger.info("Starting ContentForwardBot...")
+    write_pid()
+    logger.info("Starting ContentForwardBot (PID: {})...", os.getpid())
 
     await get_db()
 
@@ -258,6 +278,7 @@ async def main():
     await app.stop()
     await app.shutdown()
     await close_db()
+    remove_pid()
     logger.info("Shutdown complete")
 
 
