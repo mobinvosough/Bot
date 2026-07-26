@@ -18,7 +18,7 @@ from loguru import logger
 
 from config import settings
 from utils.logger import setup_logger
-from core.database import get_db, close_db, get_admins, get_setting
+from core.database import get_db, close_db, get_admins, get_setting, add_admin
 from core.pyrogram_client import PyrogramClient
 from core.queue_manager import QueueWorker
 import bot.handlers as handlers
@@ -178,6 +178,12 @@ async def main():
     logger.info("Starting ContentForwardBot...")
 
     await get_db()
+
+    admins = await get_admins()
+    if not admins:
+        for uid in settings.ADMIN_IDS:
+            await add_admin(uid)
+        logger.info("Populated admins from .env: {}", settings.ADMIN_IDS)
 
     try:
         await pyrogram_client.start()
