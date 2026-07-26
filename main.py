@@ -26,6 +26,7 @@ from telegram.ext import (
     ConversationHandler,
     filters,
 )
+from telegram.ext import Defaults
 from loguru import logger
 
 from config import settings
@@ -155,7 +156,7 @@ def build_app() -> Application:
     app = (
         Application.builder()
         .token(settings.BOT_TOKEN)
-        .parse_mode("HTML")
+        .defaults(Defaults(parse_mode="HTML"))
         .build()
     )
 
