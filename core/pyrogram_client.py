@@ -122,16 +122,21 @@ class SourceWatcher:
         )
 
         source_label = chat.username or chat.title or str(chat.id)
-        await self.send_preview(
-            pending_id=pending_id,
-            source_label=source_label,
-            content_type=content_type,
-            text=text,
-            pyrogram_msg=msg,
-        )
         logger.info(
-            "New {} from {}: pending_id={}", content_type, source_label, pending_id
+            "New {} from {}: pending_id={}, sending preview to admins...",
+            content_type, source_label, pending_id,
         )
+        try:
+            await self.send_preview(
+                pending_id=pending_id,
+                source_label=source_label,
+                content_type=content_type,
+                text=text,
+                pyrogram_msg=msg,
+            )
+            logger.info("Preview sent successfully for pending_id={}", pending_id)
+        except Exception:
+            logger.exception("Failed to send preview for pending_id={}", pending_id)
 
 
 class PyrogramClient:
