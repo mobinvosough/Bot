@@ -20,7 +20,6 @@ from core.database import (
     add_admin,
     remove_admin,
     get_admins,
-    is_setup_complete,
     log_action,
     get_pending_by_id,
     update_pending_status,
@@ -39,11 +38,12 @@ from bot.keyboards import (
     back_to_menu_keyboard,
     preview_keyboard,
     queue_list_keyboard,
+    cancel_keyboard,
 )
 
 pyrogram_client = None
 
-SET_TARGET, SET_SOURCE, SET_TAG = range(3)
+SET_TARGET, SET_SOURCE, SET_TAG, SET_ADMIN = range(4)
 
 
 def is_admin(user_id: int) -> bool:
@@ -51,6 +51,7 @@ def is_admin(user_id: int) -> bool:
 
 
 # ── /start ──────────────────────────────────────────────────────────
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -60,24 +61,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     target = await get_setting("target_channel") or "Not set"
     sources = await get_source_channels()
     tag = await get_setting("custom_tag") or "Not set"
+    admins = await get_admins()
+    queue_items = await get_active_queue_items()
 
     text = (
-        "ContentForwardBot\n\n"
-        f"Target: {target}\n"
-        f"Sources: {', '.join(sources) if sources else 'none'}\n"
-        f"Tag:\n{tag}\n\n"
-        "Commands:\n"
-        "/set_target - Set target channel\n"
-        "/add_source - Add source channel\n"
-        "/list_sources - List source channels\n"
-        "/set_tag - Change tag\n"
-        "/status - Bot status\n"
-        "/menu - Open panel"
+        "📋 ContentForwardBot\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Target: {target}\n"
+        f"📢 Sources: {len(sources)}\n"
+        f"👥 Admins: {len(admins)}\n"
+        f"📝 Tag: {tag}\n"
+        f"📋 Queue: {len(queue_items)} items\n\n"
+        "Use the menu below to manage the bot."
     )
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, reply_markup=main_menu_keyboard())
 
 
-# ── /set_target ─────────────────────────────────────────────────────
+# ── Target conversation ─────────────────────────────────────────────
+
 
 async def set_target_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
@@ -89,22 +90,52 @@ async def set_target_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return SET_TARGET
 
 
+async def menu_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    current = await get_setting("target_channel") or "Not set"
+    await query.edit_message_text(
+        "🎯 Target Channel\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current: {current}\n\n"
+        "Send the new Target Channel (username or ID).",
+        reply_markup=cancel_keyboard(),
+    )
+    return SET_TARGET
+
+
 async def set_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     await set_setting("target_channel", text)
     await log_action(update.effective_user.id, f"target_set:{text}")
-    await update.message.reply_text(f"Target set to: {text}")
+    await update.message.reply_text(
+        f"✅ Target channel updated to: {text}",
+        reply_markup=back_to_menu_keyboard(),
+    )
     return ConversationHandler.END
 
 
-# ── /add_source ─────────────────────────────────────────────────────
+# ── Source conversation ─────────────────────────────────────────────
+
 
 async def add_source_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
     await update.message.reply_text("Send the Source Channel (username or ID).")
+    return SET_SOURCE
+
+
+async def menu_add_source_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "➕ Add Source\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send the Source Channel (username or ID).",
+        reply_markup=cancel_keyboard(),
+    )
     return SET_SOURCE
 
 
@@ -116,28 +147,14 @@ async def add_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await log_action(update.effective_user.id, f"source_added:{text}")
     sources = await get_source_channels()
     await update.message.reply_text(
-        f"Source added: {text}\n\nCurrent sources:",
+        f"✅ Source added: {text}",
         reply_markup=source_list_keyboard(sources),
     )
     return ConversationHandler.END
 
 
-# ── /list_sources ───────────────────────────────────────────────────
+# ── Tag conversation ────────────────────────────────────────────────
 
-async def list_sources_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(update.effective_user.id):
-        return
-    sources = await get_source_channels()
-    if not sources:
-        await update.message.reply_text("No source channels configured.")
-        return
-    text = "Source channels:\n\n"
-    for i, src in enumerate(sources, 1):
-        text += f"{i}. {src}\n"
-    await update.message.reply_text(text, reply_markup=source_list_keyboard(sources))
-
-
-# ── /set_tag ────────────────────────────────────────────────────────
 
 async def set_tag_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
@@ -145,6 +162,20 @@ async def set_tag_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     current = await get_setting("custom_tag") or "Not set"
     await update.message.reply_text(
         f"Current tag:\n{current}\n\nSend the new custom tag."
+    )
+    return SET_TAG
+
+
+async def menu_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    current = await get_setting("custom_tag") or "Not set"
+    await query.edit_message_text(
+        "📝 Custom Tag\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current tag:\n{current}\n\n"
+        "Send the new custom tag (multi-line supported).",
+        reply_markup=cancel_keyboard(),
     )
     return SET_TAG
 
@@ -160,19 +191,51 @@ async def set_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return SET_TAG
     await set_setting("custom_tag", text)
     await log_action(update.effective_user.id, "tag_changed")
-    await update.message.reply_text(f"Tag updated to:\n{text}")
+    await update.message.reply_text(
+        f"✅ Tag updated to:\n{text}",
+        reply_markup=back_to_menu_keyboard(),
+    )
     return ConversationHandler.END
 
 
-# ── /menu ───────────────────────────────────────────────────────────
+# ── Admin conversation ──────────────────────────────────────────────
 
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+async def menu_add_admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "➕ Add Admin\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send the Admin User ID.",
+        reply_markup=cancel_keyboard(),
+    )
+    return SET_ADMIN
+
+
+async def add_admin_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
-        return
-    await update.message.reply_text("Main Menu", reply_markup=main_menu_keyboard())
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    try:
+        uid = int(text)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid User ID. Send a numeric ID or /cancel."
+        )
+        return SET_ADMIN
+    await add_admin(uid)
+    await log_action(update.effective_user.id, f"admin_added:{uid}")
+    admins = await get_admins()
+    await update.message.reply_text(
+        f"✅ Admin added: {uid}",
+        reply_markup=admin_list_keyboard(admins),
+    )
+    return ConversationHandler.END
 
 
 # ── Menu callbacks ──────────────────────────────────────────────────
+
 
 async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -195,52 +258,113 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             next_post = queue_items[0]["scheduled_time"]
 
     text = (
-        "Bot Status\n\n"
-        f"Target: {target}\n"
-        f"Sources: {len(sources)} ({', '.join(sources) if sources else 'none'})\n"
-        f"Admins: {len(admins)}\n"
-        f"Queue: {len(queue_items)} items | Next: {next_post}\n"
-        f"Pending messages: {pending_count}\n"
-        f"Tag:\n{tag}\n"
+        "📊 Bot Status\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Target: {target}\n"
+        f"📢 Sources: {len(sources)}\n"
+        f"👥 Admins: {len(admins)}\n"
+        f"📝 Tag: {tag}\n\n"
+        f"📋 Queue: {len(queue_items)} items\n"
+        f"⏰ Next post: {next_post}\n"
+        f"📨 Pending: {pending_count}\n"
     )
 
     if actions:
-        text += "\nLast actions:\n"
+        text += "\n📜 Recent actions:\n"
         for a in actions:
-            text += f"  - {a['action']} (admin {a['admin_id']})\n"
+            text += f"  • {a['action']} (admin {a['admin_id']})\n"
 
     await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
 
 
-async def menu_add_source_entry(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
+async def menu_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Send me the Source Channel (username or ID).")
-    return SET_SOURCE
+    sources = await get_source_channels()
+
+    if sources:
+        text = f"📢 Source Channels ({len(sources)})\n━━━━━━━━━━━━━━━━━━━━\n"
+        for i, src in enumerate(sources, 1):
+            text += f"\n{i}. {src}"
+        text += "\n\nRemove a source with the buttons below."
+    else:
+        text = (
+            "📢 Source Channels\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No sources configured.\nTap 'Add Source' to add one."
+        )
+
+    await query.edit_message_text(text, reply_markup=source_list_keyboard(sources))
 
 
-async def menu_change_target_entry(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    query = update.callback_query
-    await query.answer()
-    current = await get_setting("target_channel") or "Not set"
-    await query.edit_message_text(
-        f"Current target: {current}\n\nSend me the new Target Channel (username or ID)."
-    )
-    return SET_TARGET
-
-
-async def menu_manage_admins_entry(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def menu_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     admins = await get_admins()
+
+    if admins:
+        text = f"👥 Admins ({len(admins)})\n━━━━━━━━━━━━━━━━━━━━\n"
+        for i, admin in enumerate(admins, 1):
+            label = f"@{admin['username']}" if admin["username"] else str(admin["user_id"])
+            text += f"\n{i}. {label}"
+        text += "\n\nRemove an admin with the buttons below."
+    else:
+        text = (
+            "👥 Admins\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No admins configured.\nTap 'Add Admin' to add one."
+        )
+
+    await query.edit_message_text(text, reply_markup=admin_list_keyboard(admins))
+
+
+async def menu_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    items = await get_active_queue_items()
+    if not items:
+        await query.edit_message_text(
+            "📋 Queue\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Queue is empty.",
+            reply_markup=back_to_menu_keyboard(),
+        )
+        return
+
+    text = f"📋 Queue ({len(items)} items)\n━━━━━━━━━━━━━━━━━━━━\n"
+    for i, item in enumerate(items, 1):
+        ctype = item.get("content_type", "?")
+        sched = item.get("scheduled_time", "?")
+        try:
+            dt = datetime.fromisoformat(sched)
+            sched_fmt = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, TypeError):
+            sched_fmt = sched
+        text += f"\n{i}. {ctype} — {sched_fmt}"
+    text += "\n\nRemove an item with the buttons below."
+    await query.edit_message_text(text, reply_markup=queue_list_keyboard(items))
+
+
+async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
     await query.edit_message_text(
-        "Manage Admins", reply_markup=admin_list_keyboard(admins)
+        "⚙️ Settings\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "No settings available yet.",
+        reply_markup=back_to_menu_keyboard(),
+    )
+
+
+# ── Navigation callbacks ────────────────────────────────────────────
+
+
+async def back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "📋 ContentForwardBot\n━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -251,61 +375,19 @@ async def remove_admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await remove_admin(uid)
     await log_action(update.effective_user.id, f"admin_removed:{uid}")
     admins = await get_admins()
-    await query.edit_message_text(
-        "Manage Admins", reply_markup=admin_list_keyboard(admins)
-    )
-
-
-async def add_admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Send me the Admin User ID.")
-
-
-async def menu_change_tag_entry(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    query = update.callback_query
-    await query.answer()
-    current = await get_setting("custom_tag") or "Not set"
-    await query.edit_message_text(
-        f"Current tag:\n{current}\n\nSend me the new custom tag (multi-line supported)."
-    )
-    return SET_TAG
-
-
-async def menu_view_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    items = await get_active_queue_items()
-    if not items:
-        await query.edit_message_text(
-            "Queue is empty.", reply_markup=back_to_menu_keyboard()
+    if admins:
+        text = f"👥 Admins ({len(admins)})\n━━━━━━━━━━━━━━━━━━━━\n"
+        for i, admin in enumerate(admins, 1):
+            label = f"@{admin['username']}" if admin["username"] else str(admin["user_id"])
+            text += f"\n{i}. {label}"
+        text += "\n\nRemove an admin with the buttons below."
+    else:
+        text = (
+            "👥 Admins\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No admins configured.\nTap 'Add Admin' to add one."
         )
-        return
-    text = f"Queue ({len(items)} items)\n\n"
-    for i, item in enumerate(items, 1):
-        ctype = item.get("content_type", "?")
-        sched = item.get("scheduled_time", "?")
-        try:
-            dt = datetime.fromisoformat(sched)
-            sched_fmt = dt.strftime("%Y-%m-%d %H:%M UTC")
-        except (ValueError, TypeError):
-            sched_fmt = sched
-        text += f"{i}. {ctype} — scheduled {sched_fmt}\n"
-    await query.edit_message_text(text, reply_markup=queue_list_keyboard(items))
-
-
-async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Settings", reply_markup=back_to_menu_keyboard())
-
-
-async def back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Main Menu", reply_markup=main_menu_keyboard())
+    await query.edit_message_text(text, reply_markup=admin_list_keyboard(admins))
 
 
 async def remove_source_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,12 +397,36 @@ async def remove_source_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await remove_source_channel(src)
     await log_action(update.effective_user.id, f"source_removed:{src}")
     sources = await get_source_channels()
-    await query.edit_message_text(
-        "Sources", reply_markup=source_list_keyboard(sources)
-    )
+    if sources:
+        text = f"📢 Source Channels ({len(sources)})\n━━━━━━━━━━━━━━━━━━━━\n"
+        for i, s in enumerate(sources, 1):
+            text += f"\n{i}. {s}"
+        text += "\n\nRemove a source with the buttons below."
+    else:
+        text = (
+            "📢 Source Channels\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No sources configured.\nTap 'Add Source' to add one."
+        )
+    await query.edit_message_text(text, reply_markup=source_list_keyboard(sources))
+
+
+# ── Cancel / fallback ───────────────────────────────────────────────
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "🚫 Cancelled.", reply_markup=back_to_menu_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def conv_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🚫 Cancelled.", reply_markup=back_to_menu_keyboard()
+    )
     return ConversationHandler.END
 
 
@@ -465,12 +571,24 @@ async def cancel_queue_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     qid = int(query.data.split(":")[1])
     removed = await cancel_queue_item(qid)
     await log_action(update.effective_user.id, f"queue_cancelled:{qid}")
-    if removed:
-        await query.edit_message_text(f"Queue item #{qid} cancelled.")
-    else:
-        await query.edit_message_text(f"Queue item #{qid} not found or already processed.")
     items = await get_active_queue_items()
     if items:
-        await query.message.reply_text(
-            "Updated queue:", reply_markup=queue_list_keyboard(items)
+        text = f"📋 Queue ({len(items)} items)\n━━━━━━━━━━━━━━━━━━━━\n"
+        for i, item in enumerate(items, 1):
+            ctype = item.get("content_type", "?")
+            sched = item.get("scheduled_time", "?")
+            try:
+                dt = datetime.fromisoformat(sched)
+                sched_fmt = dt.strftime("%Y-%m-%d %H:%M UTC")
+            except (ValueError, TypeError):
+                sched_fmt = sched
+            text += f"\n{i}. {ctype} — {sched_fmt}"
+        text += "\n\nRemove an item with the buttons below."
+        await query.edit_message_text(text, reply_markup=queue_list_keyboard(items))
+    else:
+        await query.edit_message_text(
+            "📋 Queue\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Queue is empty.",
+            reply_markup=back_to_menu_keyboard(),
         )

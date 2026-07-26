@@ -26,27 +26,29 @@ from bot.handlers import (
     SET_TARGET,
     SET_SOURCE,
     SET_TAG,
+    SET_ADMIN,
     start_command,
     set_target_entry,
     set_target_save,
     add_source_entry,
     add_source_save,
-    list_sources_command,
     set_tag_entry,
     set_tag_save,
-    menu_command,
+    add_admin_save,
     menu_status,
+    menu_sources,
     menu_add_source_entry,
-    menu_change_target_entry,
-    menu_manage_admins_entry,
-    remove_admin_cb,
-    add_admin_entry,
-    menu_change_tag_entry,
-    menu_view_queue,
+    menu_target,
+    menu_admins,
+    menu_add_admin_entry,
+    menu_tag,
+    menu_queue,
     menu_settings,
     back_main,
+    remove_admin_cb,
     remove_source_cb,
     cancel,
+    conv_cancel_callback,
     preview_add_queue,
     preview_send_now,
     preview_reject,
@@ -106,23 +108,26 @@ def make_send_preview(bot: Bot):
 def build_app() -> Application:
     app = Application.builder().token(settings.BOT_TOKEN).build()
 
+    conv_fallbacks = [
+        CommandHandler("cancel", cancel),
+        CallbackQueryHandler(conv_cancel_callback, pattern=r"^conv_cancel$"),
+    ]
+
     target_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("set_target", set_target_entry),
-            CallbackQueryHandler(menu_change_target_entry, pattern=r"^menu_change_target$"),
+            CallbackQueryHandler(menu_target, pattern=r"^menu_target$"),
         ],
         states={
             SET_TARGET: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_target_save)
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=conv_fallbacks,
         allow_reentry=True,
     )
 
     source_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("add_source", add_source_entry),
             CallbackQueryHandler(menu_add_source_entry, pattern=r"^menu_add_source$"),
         ],
         states={
@@ -130,39 +135,49 @@ def build_app() -> Application:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_save)
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=conv_fallbacks,
         allow_reentry=True,
     )
 
     tag_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("set_tag", set_tag_entry),
-            CallbackQueryHandler(menu_change_tag_entry, pattern=r"^menu_change_tag$"),
+            CallbackQueryHandler(menu_tag, pattern=r"^menu_tag$"),
         ],
         states={
             SET_TAG: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_tag_save)
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=conv_fallbacks,
+        allow_reentry=True,
+    )
+
+    admin_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(menu_add_admin_entry, pattern=r"^menu_add_admin$"),
+        ],
+        states={
+            SET_ADMIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_save)
+            ],
+        },
+        fallbacks=conv_fallbacks,
         allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("status", menu_status))
-    app.add_handler(CommandHandler("menu", menu_command))
-    app.add_handler(CommandHandler("list_sources", list_sources_command))
 
     app.add_handler(target_handler)
     app.add_handler(source_handler)
     app.add_handler(tag_handler)
+    app.add_handler(admin_handler)
 
     app.add_handler(CallbackQueryHandler(menu_status, pattern=r"^menu_status$"))
-    app.add_handler(CallbackQueryHandler(menu_manage_admins_entry, pattern=r"^menu_manage_admins$"))
-    app.add_handler(CallbackQueryHandler(menu_view_queue, pattern=r"^menu_view_queue$"))
+    app.add_handler(CallbackQueryHandler(menu_sources, pattern=r"^menu_sources$"))
+    app.add_handler(CallbackQueryHandler(menu_admins, pattern=r"^menu_admins$"))
+    app.add_handler(CallbackQueryHandler(menu_queue, pattern=r"^menu_queue$"))
     app.add_handler(CallbackQueryHandler(menu_settings, pattern=r"^menu_settings$"))
     app.add_handler(CallbackQueryHandler(remove_admin_cb, pattern=r"^remove_admin:"))
-    app.add_handler(CallbackQueryHandler(add_admin_entry, pattern=r"^add_admin$"))
     app.add_handler(CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:"))
     app.add_handler(CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:"))
     app.add_handler(CallbackQueryHandler(preview_send_now, pattern=r"^preview_send:"))
