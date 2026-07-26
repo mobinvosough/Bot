@@ -3,6 +3,8 @@ from typing import Callable, Awaitable
 
 from pathlib import Path
 
+import core.pyrogram_patch  # noqa: F401
+
 from pyrogram import Client
 from pyrogram.types import Message
 from pyrogram.enums import MessageMediaType
@@ -167,14 +169,29 @@ class PyrogramClient:
         logger.info("Pyrogram client stopped")
 
     async def _connect_with_retry(self):
-        while True:
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
             try:
                 await self.client.start()
                 logger.info("Pyrogram client connected")
+                await self._cache_peers()
                 return
             except Exception:
-                logger.warning("Pyrogram connect failed, retrying in {}s", RECONNECT_INTERVAL)
-                await asyncio.sleep(RECONNECT_INTERVAL)
+                if attempt < max_retries:
+                    logger.warning("Pyrogram connect failed (attempt {}/{}), retrying in {}s", attempt, max_retries, RECONNECT_INTERVAL)
+                    await asyncio.sleep(RECONNECT_INTERVAL)
+                else:
+                    logger.error("Pyrogram connect failed after {} attempts. Run 'python login.py' on a machine with a terminal to authenticate, then copy the .session file to this server.", max_retries)
+                    return
+
+    async def _cache_peers(self):
+        try:
+            count = 0
+            async for dialog in self.client.get_dialogs(limit=200):
+                count += 1
+            logger.info("Cached {} peers from dialogs", count)
+        except Exception:
+            logger.exception("Failed to cache peers")
 
     async def _reconnect_loop(self):
         while True:

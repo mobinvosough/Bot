@@ -137,8 +137,8 @@ async def get_admins() -> list[dict]:
 
 
 async def is_setup_complete() -> bool:
-    target = await get_setting("target_channel")
-    return target is not None and target != ""
+    val = await get_setting("setup_complete")
+    return val == "true"
 
 
 async def log_action(admin_id: int, action: str, message_id: int | None = None):

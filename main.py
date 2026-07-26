@@ -83,10 +83,11 @@ def build_app() -> Application:
                 CallbackQueryHandler(setup_source_confirm_cb, pattern=r"^setup_source_")
             ],
             SETUP_ADMINS: [
+                CommandHandler("done", setup_admins),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, setup_admins),
             ],
             SETUP_PHONE: [
-                CallbackQueryHandler(setup_phone_cb, pattern=r"^setup_source_")
+                CallbackQueryHandler(setup_phone_cb, pattern=r"^setup_source_done$")
             ],
         },
         fallbacks=[
@@ -228,8 +229,19 @@ async def main():
 
     send_preview = make_send_preview(app.bot)
     handlers.pyrogram_client = pyrogram_client
-    await pyrogram_client.start(send_preview)
-    await queue_worker.start()
+
+    async def _start_pyrogram():
+        try:
+            await pyrogram_client.start(send_preview)
+        except Exception:
+            logger.exception("Pyrogram client failed to start. SourceWatcher disabled. Run 'python login.py' to re-authenticate.")
+
+    pyro_task = asyncio.create_task(_start_pyrogram())
+
+    try:
+        await queue_worker.start()
+    except Exception:
+        logger.exception("QueueWorker failed to start")
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
 
