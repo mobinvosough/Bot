@@ -1,8 +1,8 @@
 import asyncio
-import io
 import os
 import signal
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
@@ -17,7 +17,7 @@ if not RUN_BOT:
 
 PID_FILE = ROOT_DIR / "bot.pid"
 
-from telegram import Bot, InputFile
+from telegram import Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -101,28 +101,33 @@ def make_send_preview(bot: Bot, pyrogram_app):
 
         for admin in admins:
             uid = admin["user_id"]
+            tmp_path = None
             try:
                 if pyrogram_msg and content_type == "Photo" and pyrogram_msg.photo:
-                    buf = io.BytesIO()
-                    await pyrogram_app.download_media(pyrogram_msg, file_name=buf)
-                    buf.seek(0)
-                    await bot.send_photo(
-                        chat_id=uid,
-                        photo=InputFile(buf),
-                        caption=header,
-                        reply_markup=kb,
-                    )
+                    tmp_path = tempfile.NamedTemporaryFile(
+                        suffix=".jpg", delete=False
+                    ).name
+                    await pyrogram_app.download_media(pyrogram_msg, file_name=tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        await bot.send_photo(
+                            chat_id=uid,
+                            photo=f,
+                            caption=header,
+                            reply_markup=kb,
+                        )
                     sent_any = True
                 elif pyrogram_msg and content_type == "Video" and pyrogram_msg.video:
-                    buf = io.BytesIO()
-                    await pyrogram_app.download_media(pyrogram_msg, file_name=buf)
-                    buf.seek(0)
-                    await bot.send_video(
-                        chat_id=uid,
-                        video=InputFile(buf),
-                        caption=header,
-                        reply_markup=kb,
-                    )
+                    tmp_path = tempfile.NamedTemporaryFile(
+                        suffix=".mp4", delete=False
+                    ).name
+                    await pyrogram_app.download_media(pyrogram_msg, file_name=tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        await bot.send_video(
+                            chat_id=uid,
+                            video=f,
+                            caption=header,
+                            reply_markup=kb,
+                        )
                     sent_any = True
                 else:
                     await bot.send_message(
@@ -133,6 +138,12 @@ def make_send_preview(bot: Bot, pyrogram_app):
                     sent_any = True
             except Exception:
                 logger.exception("Failed to send preview to admin {}", uid)
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
         if not sent_any:
             raise RuntimeError(f"Failed to send preview to all {len(admins)} admins")

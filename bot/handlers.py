@@ -8,6 +8,8 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
+import os
+import tempfile
 from loguru import logger
 
 from config import settings
@@ -551,29 +553,42 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     text = clean_and_tag(raw_text, tag)
 
     content_type = pending.get("content_type", "Text")
-    media_id = pending.get("media_file_id")
     source_chat = pending.get("source_channel")
     msg_id = pending.get("message_id")
+    tmp_path = None
 
     try:
         if pyrogram_client and pyrogram_client.client:
-            if content_type == "Photo" and media_id:
-                await pyrogram_client.client.send_photo(
-                    chat_id=target, photo=media_id, caption=text
-                )
-            elif content_type == "Video" and media_id:
-                await pyrogram_client.client.send_video(
-                    chat_id=target, video=media_id, caption=text
-                )
-            elif source_chat and msg_id:
-                from_chat = (
-                    int(source_chat)
-                    if source_chat.lstrip("-").isdigit()
-                    else source_chat
-                )
-                await pyrogram_client.client.copy_message(
-                    chat_id=target, from_chat_id=from_chat, message_id=msg_id
-                )
+            from_chat = (
+                int(source_chat)
+                if source_chat and source_chat.lstrip("-").isdigit()
+                else source_chat
+            )
+
+            if content_type == "Photo" and from_chat and msg_id:
+                tmp_path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
+                orig_msg = await pyrogram_client.client.get_messages(from_chat, msg_id)
+                if orig_msg and orig_msg.photo:
+                    await pyrogram_client.client.download_media(orig_msg, file_name=tmp_path)
+                    await pyrogram_client.client.send_photo(
+                        chat_id=target, photo=tmp_path, caption=text
+                    )
+                else:
+                    await pyrogram_client.client.send_message(
+                        chat_id=target, text=text
+                    )
+            elif content_type == "Video" and from_chat and msg_id:
+                tmp_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+                orig_msg = await pyrogram_client.client.get_messages(from_chat, msg_id)
+                if orig_msg and orig_msg.video:
+                    await pyrogram_client.client.download_media(orig_msg, file_name=tmp_path)
+                    await pyrogram_client.client.send_video(
+                        chat_id=target, video=tmp_path, caption=text
+                    )
+                else:
+                    await pyrogram_client.client.send_message(
+                        chat_id=target, text=text
+                    )
             else:
                 await pyrogram_client.client.send_message(
                     chat_id=target, text=text
@@ -592,6 +607,12 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except Exception:
         logger.exception("Failed to forward message #{}", pending_id)
         await query.answer("Failed to forward message.", show_alert=True)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
