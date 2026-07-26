@@ -1,6 +1,8 @@
 import asyncio
 from typing import Callable, Awaitable
 
+from pathlib import Path
+
 from pyrogram import Client
 from pyrogram.types import Message
 from pyrogram.enums import MessageMediaType
@@ -16,6 +18,7 @@ from utils.cleaner import clean_text
 
 POLL_INTERVAL = 20
 RECONNECT_INTERVAL = 30
+SESSION_NAME = "content_forward_bot"
 SUPPORTED_TYPES = {MessageMediaType.PHOTO, MessageMediaType.VIDEO, None}
 TYPE_LABELS = {
     None: "Text",
@@ -131,12 +134,15 @@ class SourceWatcher:
 
 class PyrogramClient:
     def __init__(self):
-        self.client = Client(
-            name="content_forward_bot",
+        session_exists = Path(f"{SESSION_NAME}.session").exists()
+        client_args = dict(
+            name=SESSION_NAME,
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
-            phone_number=settings.PHONE_NUMBER,
         )
+        if not session_exists:
+            client_args["phone_number"] = settings.PHONE_NUMBER
+        self.client = Client(**client_args)
         self.watcher: SourceWatcher | None = None
         self._reconnect_task: asyncio.Task | None = None
 
