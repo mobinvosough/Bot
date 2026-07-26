@@ -17,7 +17,7 @@ if not RUN_BOT:
 
 PID_FILE = ROOT_DIR / "bot.pid"
 
-from telegram import Bot
+from telegram import Bot, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -152,6 +152,69 @@ def make_send_preview(bot: Bot, pyrogram_app):
     return send_preview
 
 
+def make_send_album_preview(bot: Bot, pyrogram_app):
+    async def send_album_preview(
+        pending_id: int,
+        source_label: str,
+        text: str | None,
+        album_msgs: list,
+    ):
+        admins = await get_admins()
+        tag = await get_setting("custom_tag")
+        from utils.cleaner import clean_and_tag
+        display_text = clean_and_tag(text, tag)
+        header = f"<b>Album</b> from <code>{source_label}</code>\n\n{display_text}\n\nID: #{pending_id}"
+
+        kb = preview_keyboard(pending_id)
+        sent_any = False
+
+        for admin in admins:
+            uid = admin["user_id"]
+            tmp_paths = []
+            try:
+                media_group = []
+                for i, m in enumerate(album_msgs):
+                    suffix = ".jpg" if m.photo else ".mp4"
+                    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name
+                    tmp_paths.append(tmp)
+                    await pyrogram_app.download_media(m, file_name=tmp)
+                    cap = header if i == 0 else ""
+                    if m.photo:
+                        media_group.append(InputMediaPhoto(
+                            media=open(tmp, "rb"),
+                            caption=cap,
+                        ))
+                    elif m.video:
+                        media_group.append(InputMediaVideo(
+                            media=open(tmp, "rb"),
+                            caption=cap,
+                        ))
+
+                if media_group:
+                    await bot.send_media_group(chat_id=uid, media=media_group)
+
+                await bot.send_message(
+                    chat_id=uid,
+                    text=f"ID: #{pending_id}",
+                    reply_markup=kb,
+                )
+                sent_any = True
+            except Exception:
+                logger.exception("Failed to send album preview to admin {}", uid)
+            finally:
+                for p in tmp_paths:
+                    if os.path.exists(p):
+                        try:
+                            os.unlink(p)
+                        except OSError:
+                            pass
+
+        if not sent_any:
+            raise RuntimeError(f"Failed to send album preview to all {len(admins)} admins")
+
+    return send_album_preview
+
+
 def build_app() -> Application:
     app = (
         Application.builder()
@@ -278,10 +341,14 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     send_preview = make_send_preview(app.bot, pyrogram_client.client)
+    send_album_preview = make_send_album_preview(app.bot, pyrogram_client.client)
     handlers.pyrogram_client = pyrogram_client
 
     try:
-        await pyrogram_client.start(send_preview=send_preview)
+        await pyrogram_client.start(
+            send_preview=send_preview,
+            send_album_preview=send_album_preview,
+        )
         logger.info("Pyrogram client connected")
     except Exception:
         logger.warning("Pyrogram failed to connect. SourceWatcher disabled.")

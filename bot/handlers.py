@@ -8,6 +8,7 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
+import json
 from loguru import logger
 
 from config import settings
@@ -568,7 +569,19 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         client = pyrogram_client.client
 
-        if content_type == "Photo" and media_id:
+        if content_type.startswith("Album") and media_id:
+            from pyrogram.types import InputMediaPhoto, InputMediaVideo
+            media_items = json.loads(media_id)
+            group = []
+            for i, item in enumerate(media_items):
+                cap = text if i == 0 else ""
+                if item["type"] == "photo":
+                    group.append(InputMediaPhoto(media=item["file_id"], caption=cap))
+                elif item["type"] == "video":
+                    group.append(InputMediaVideo(media=item["file_id"], caption=cap))
+            logger.info("Send Now #{}: sending Album ({}) to {}", pending_id, len(group), target)
+            await client.send_media_group(chat_id=target, media=group)
+        elif content_type == "Photo" and media_id:
             logger.info("Send Now #{}: sending Photo via file_id to {}", pending_id, target)
             await client.send_photo(chat_id=target, photo=media_id, caption=text)
         elif content_type == "Video" and media_id:

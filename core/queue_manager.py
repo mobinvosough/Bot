@@ -1,4 +1,5 @@
 import asyncio
+import json
 from loguru import logger
 from pyrogram import Client
 
@@ -72,7 +73,19 @@ class QueueWorker:
         media_id = item.get("media_file_id")
 
         try:
-            if content_type == "Photo" and media_id:
+            if content_type.startswith("Album") and media_id:
+                from pyrogram.types import InputMediaPhoto, InputMediaVideo
+                media_items = json.loads(media_id)
+                group = []
+                for i, item in enumerate(media_items):
+                    cap = text if i == 0 else ""
+                    if item["type"] == "photo":
+                        group.append(InputMediaPhoto(media=item["file_id"], caption=cap))
+                    elif item["type"] == "video":
+                        group.append(InputMediaVideo(media=item["file_id"], caption=cap))
+                logger.info("QueueWorker: sending Album ({}) pending_id={}", len(group), pending_id)
+                await self._client.send_media_group(chat_id=target, media=group)
+            elif content_type == "Photo" and media_id:
                 logger.info("QueueWorker: sending Photo via file_id pending_id={}", pending_id)
                 await self._client.send_photo(
                     chat_id=target, photo=media_id, caption=text

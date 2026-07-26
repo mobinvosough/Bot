@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Callable, Awaitable
 
 import core.pyrogram_patch  # noqa: F401
@@ -27,10 +28,24 @@ TYPE_LABELS = {
 }
 
 
+def _extract_text(msg: Message) -> str | None:
+    for attr in ("text", "caption", "description"):
+        val = getattr(msg, attr, None)
+        if val:
+            return val
+    return None
+
+
 class SourceWatcher:
-    def __init__(self, app: Client, send_preview: Callable[..., Awaitable]):
+    def __init__(
+        self,
+        app: Client,
+        send_preview: Callable[..., Awaitable],
+        send_album_preview: Callable[..., Awaitable] | None = None,
+    ):
         self.app = app
         self.send_preview = send_preview
+        self.send_album_preview = send_album_preview
         self._task: asyncio.Task | None = None
         self._seen: set[tuple[str, int]] = set()
         self._running = False
@@ -93,7 +108,11 @@ class SourceWatcher:
                 continue
 
             self._seen.add(key)
-            await self._process_message(msg, chat)
+
+            if msg.media_group_id:
+                await self._process_album(msg, chat)
+            else:
+                await self._process_message(msg, chat)
             count += 1
 
     def _is_supported(self, msg: Message) -> bool:
@@ -101,9 +120,60 @@ class SourceWatcher:
             return True
         return msg.media in SUPPORTED_TYPES
 
+    async def _process_album(self, msg: Message, chat):
+        try:
+            album_msgs = await self.app.get_media_group(chat.id, msg.id)
+        except Exception:
+            logger.exception("Failed to get media group for msg_id={}", msg.id)
+            return
+
+        for m in album_msgs:
+            self._seen.add((str(chat.id), m.id))
+
+        text = clean_text(_extract_text(msg))
+
+        media_items = []
+        for m in album_msgs:
+            if m.photo:
+                media_items.append({"type": "photo", "file_id": m.photo.file_id})
+            elif m.video:
+                media_items.append({"type": "video", "file_id": m.video.file_id})
+
+        if not media_items:
+            return
+
+        media_ids_json = json.dumps(media_items)
+        first_type = media_items[0]["type"].capitalize()
+
+        pending_id = await save_pending_message(
+            source_channel=str(chat.id),
+            message_id=msg.id,
+            content_type=f"Album ({len(media_items)} items)",
+            text_or_caption=text,
+            media_file_id=media_ids_json,
+        )
+
+        source_label = chat.username or chat.title or str(chat.id)
+        logger.info(
+            "New Album ({}) from {}: pending_id={}, sending preview...",
+            len(media_items), source_label, pending_id,
+        )
+
+        if self.send_album_preview:
+            try:
+                await self.send_album_preview(
+                    pending_id=pending_id,
+                    source_label=source_label,
+                    text=text,
+                    album_msgs=album_msgs,
+                )
+                logger.info("Album preview sent for pending_id={}", pending_id)
+            except Exception:
+                logger.exception("Failed to send album preview for pending_id={}", pending_id)
+
     async def _process_message(self, msg: Message, chat):
         content_type = TYPE_LABELS.get(msg.media, "Unknown")
-        text = clean_text(msg.text or msg.caption)
+        text = clean_text(_extract_text(msg))
         media_id = None
 
         if msg.media == MessageMediaType.PHOTO:
@@ -147,11 +217,17 @@ class PyrogramClient:
         )
         self.watcher: SourceWatcher | None = None
         self._send_preview: Callable[..., Awaitable] | None = None
+        self._send_album_preview: Callable[..., Awaitable] | None = None
         self._reconnect_task: asyncio.Task | None = None
 
-    async def start(self, send_preview: Callable[..., Awaitable] | None = None):
+    async def start(
+        self,
+        send_preview: Callable[..., Awaitable] | None = None,
+        send_album_preview: Callable[..., Awaitable] | None = None,
+    ):
         logger.info("Starting Pyrogram client...")
         self._send_preview = send_preview
+        self._send_album_preview = send_album_preview
         await self._connect_with_retry()
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
@@ -196,7 +272,9 @@ class PyrogramClient:
 
     async def _start_watcher(self):
         if self.watcher is None and self._send_preview:
-            self.watcher = SourceWatcher(self.client, self._send_preview)
+            self.watcher = SourceWatcher(
+                self.client, self._send_preview, self._send_album_preview
+            )
             await self.watcher.start()
 
     async def _cache_peers(self):
