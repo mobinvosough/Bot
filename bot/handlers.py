@@ -548,6 +548,8 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer("No target channel configured.", show_alert=True)
         return
 
+    await query.answer("Sending...")
+
     tag = await get_setting("custom_tag")
     raw_text = pending.get("text_or_caption") or ""
     text = clean_and_tag(raw_text, tag)
