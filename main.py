@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import signal
 import sys
@@ -16,7 +17,7 @@ if not RUN_BOT:
 
 PID_FILE = ROOT_DIR / "bot.pid"
 
-from telegram import Bot
+from telegram import Bot, InputFile
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -96,32 +97,45 @@ def make_send_preview(bot: Bot):
         header = f"**{content_type}** from `{source_label}`\n\n{display_text}\n\nID: #{pending_id}"
 
         kb = preview_keyboard(pending_id)
+        sent_any = False
 
         for admin in admins:
             uid = admin["user_id"]
             try:
                 if pyrogram_msg and content_type == "Photo" and pyrogram_msg.photo:
+                    buf = io.BytesIO()
+                    await pyrogram_msg.download_media(buf)
+                    buf.seek(0)
                     await bot.send_photo(
                         chat_id=uid,
-                        photo=pyrogram_msg.photo.file_id,
+                        photo=InputFile(buf),
                         caption=header,
                         reply_markup=kb,
                     )
+                    sent_any = True
                 elif pyrogram_msg and content_type == "Video" and pyrogram_msg.video:
+                    buf = io.BytesIO()
+                    await pyrogram_msg.download_media(buf)
+                    buf.seek(0)
                     await bot.send_video(
                         chat_id=uid,
-                        video=pyrogram_msg.video.file_id,
+                        video=InputFile(buf),
                         caption=header,
                         reply_markup=kb,
                     )
+                    sent_any = True
                 else:
                     await bot.send_message(
                         chat_id=uid,
                         text=header,
                         reply_markup=kb,
                     )
+                    sent_any = True
             except Exception:
                 logger.exception("Failed to send preview to admin {}", uid)
+
+        if not sent_any:
+            raise RuntimeError(f"Failed to send preview to all {len(admins)} admins")
 
     return send_preview
 

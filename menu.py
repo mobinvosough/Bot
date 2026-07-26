@@ -148,14 +148,13 @@ def action_start():
     log_path = ROOT_DIR / "logs"
     log_path.mkdir(exist_ok=True)
 
-    with open(log_path / "bot.log", "a") as log_f:
-        process = subprocess.Popen(
-            [sys.executable, "main.py", "--run-bot"],
-            cwd=str(ROOT_DIR),
-            stdout=log_f,
-            stderr=log_f,
-            start_new_session=True,
-        )
+    process = subprocess.Popen(
+        [sys.executable, "main.py", "--run-bot"],
+        cwd=str(ROOT_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
     PID_FILE.write_text(str(process.pid))
 
