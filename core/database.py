@@ -69,3 +69,81 @@ async def close_db():
         await _db.close()
         _db = None
         logger.info("Database closed")
+
+
+async def get_setting(key: str) -> str | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = await cursor.fetchone()
+    return row["value"] if row else None
+
+
+async def set_setting(key: str, value: str):
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+        (key, value, value),
+    )
+    await db.commit()
+
+
+async def add_source_channel(username_or_id: str):
+    db = await get_db()
+    await db.execute(
+        "INSERT OR IGNORE INTO source_channels (username_or_id) VALUES (?)",
+        (username_or_id,),
+    )
+    await db.commit()
+
+
+async def remove_source_channel(username_or_id: str) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM source_channels WHERE username_or_id = ?", (username_or_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def get_source_channels() -> list[str]:
+    db = await get_db()
+    cursor = await db.execute("SELECT username_or_id FROM source_channels")
+    rows = await cursor.fetchall()
+    return [row["username_or_id"] for row in rows]
+
+
+async def add_admin(user_id: int, username: str | None = None):
+    db = await get_db()
+    await db.execute(
+        "INSERT OR REPLACE INTO admins (user_id, username) VALUES (?, ?)",
+        (user_id, username),
+    )
+    await db.commit()
+
+
+async def remove_admin(user_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def get_admins() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute("SELECT user_id, username FROM admins")
+    rows = await cursor.fetchall()
+    return [{"user_id": row["user_id"], "username": row["username"]} for row in rows]
+
+
+async def is_setup_complete() -> bool:
+    target = await get_setting("target_channel")
+    return target is not None and target != ""
+
+
+async def log_action(admin_id: int, action: str, message_id: int | None = None):
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO actions_log (message_id, admin_id, action) VALUES (?, ?, ?)",
+        (message_id, admin_id, action),
+    )
+    await db.commit()
