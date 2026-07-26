@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from telegram import Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -16,7 +17,8 @@ from loguru import logger
 
 from config import settings
 from utils.logger import setup_logger
-from core.database import get_db, close_db
+from core.database import get_db, close_db, get_admins, get_setting
+from core.pyrogram_client import PyrogramClient
 from bot.handlers import (
     SETUP_TARGET,
     SETUP_SOURCE,
@@ -51,7 +53,13 @@ from bot.handlers import (
     back_main,
     remove_source_cb,
     cancel,
+    preview_add_queue,
+    preview_send_now,
+    preview_reject,
 )
+from bot.keyboards import preview_keyboard
+
+pyrogram_client = PyrogramClient()
 
 
 def build_app() -> Application:
@@ -141,7 +149,65 @@ def build_app() -> Application:
         CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:")
     )
 
+    app.add_handler(
+        CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:")
+    )
+    app.add_handler(
+        CallbackQueryHandler(preview_send_now, pattern=r"^preview_send:")
+    )
+    app.add_handler(
+        CallbackQueryHandler(preview_reject, pattern=r"^preview_reject:")
+    )
+
     return app
+
+
+def make_send_preview(bot: Bot):
+    async def send_preview(
+        pending_id: int,
+        source_label: str,
+        content_type: str,
+        text: str | None,
+        pyrogram_msg=None,
+    ):
+        admins = await get_admins()
+        tag = await get_setting("custom_tag") or ""
+        header = f"**{content_type}** from `{source_label}`\n"
+        if tag:
+            header += f"Tag: {tag}\n"
+        if text:
+            header += f"\n{text}"
+        header += f"\n\nID: #{pending_id}"
+
+        kb = preview_keyboard(pending_id)
+
+        for admin in admins:
+            uid = admin["user_id"]
+            try:
+                if pyrogram_msg and content_type == "Photo" and pyrogram_msg.photo:
+                    await bot.send_photo(
+                        chat_id=uid,
+                        photo=pyrogram_msg.photo.file_id,
+                        caption=header,
+                        reply_markup=kb,
+                    )
+                elif pyrogram_msg and content_type == "Video" and pyrogram_msg.video:
+                    await bot.send_video(
+                        chat_id=uid,
+                        video=pyrogram_msg.video.file_id,
+                        caption=header,
+                        reply_markup=kb,
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=uid,
+                        text=header,
+                        reply_markup=kb,
+                    )
+            except Exception:
+                logger.exception("Failed to send preview to admin {}", uid)
+
+    return send_preview
 
 
 async def main():
@@ -155,6 +221,9 @@ async def main():
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
+
+    send_preview = make_send_preview(app.bot)
+    await pyrogram_client.start(send_preview)
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
 
@@ -174,6 +243,7 @@ async def main():
     await stop_event.wait()
 
     logger.info("Shutting down...")
+    await pyrogram_client.stop()
     await app.updater.stop()
     await app.stop()
     await app.shutdown()

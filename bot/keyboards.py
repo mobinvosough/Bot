@@ -80,3 +80,23 @@ def back_to_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("◀️ Back to Menu", callback_data="back_main")]]
     )
+
+
+def preview_keyboard(pending_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "➕ Add to Queue", callback_data=f"preview_queue:{pending_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🚀 Send Now", callback_data=f"preview_send:{pending_id}"
+                ),
+                InlineKeyboardButton(
+                    "❌ Reject", callback_data=f"preview_reject:{pending_id}"
+                ),
+            ],
+        ]
+    )

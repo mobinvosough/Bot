@@ -147,3 +147,47 @@ async def log_action(admin_id: int, action: str, message_id: int | None = None):
         (message_id, admin_id, action),
     )
     await db.commit()
+
+
+async def is_message_processed(source_channel: str, message_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM pending_messages WHERE source_channel = ? AND message_id = ?",
+        (source_channel, message_id),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def save_pending_message(
+    source_channel: str,
+    message_id: int,
+    content_type: str,
+    text_or_caption: str | None = None,
+    media_file_id: str | None = None,
+) -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO pending_messages (source_channel, message_id, content_type, text_or_caption, media_file_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (source_channel, message_id, content_type, text_or_caption, media_file_id),
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+async def update_pending_status(pending_id: int, status: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE pending_messages SET status = ? WHERE id = ?",
+        (status, pending_id),
+    )
+    await db.commit()
+
+
+async def get_pending_by_id(pending_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pending_messages WHERE id = ?", (pending_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None

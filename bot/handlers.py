@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -21,6 +21,8 @@ from core.database import (
     get_admins,
     is_setup_complete,
     log_action,
+    get_pending_by_id,
+    update_pending_status,
 )
 from bot.keyboards import (
     main_menu_keyboard,
@@ -29,6 +31,7 @@ from bot.keyboards import (
     source_list_keyboard,
     settings_keyboard,
     back_to_menu_keyboard,
+    preview_keyboard,
 )
 
 (
@@ -353,3 +356,35 @@ async def remove_source_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
+
+
+# ── Preview action callbacks ────────────────────────────────────────
+
+async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    pending_id = int(query.data.split(":")[1])
+    await update_pending_status(pending_id, "queued")
+    await log_action(update.effective_user.id, f"queued:{pending_id}")
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(f"Message #{pending_id} added to queue.")
+
+
+async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    pending_id = int(query.data.split(":")[1])
+    await update_pending_status(pending_id, "sent")
+    await log_action(update.effective_user.id, f"sent_now:{pending_id}")
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(f"Message #{pending_id} marked for immediate send.")
+
+
+async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    pending_id = int(query.data.split(":")[1])
+    await update_pending_status(pending_id, "rejected")
+    await log_action(update.effective_user.id, f"rejected:{pending_id}")
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(f"Message #{pending_id} rejected.")
