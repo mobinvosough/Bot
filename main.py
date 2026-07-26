@@ -94,7 +94,7 @@ def make_send_preview(bot: Bot, pyrogram_app):
         tag = await get_setting("custom_tag")
         from utils.cleaner import clean_and_tag
         display_text = clean_and_tag(text, tag)
-        header = f"**{content_type}** from `{source_label}`\n\n{display_text}\n\nID: #{pending_id}"
+        header = f"<b>{content_type}</b> from <code>{source_label}</code>\n\n{display_text}\n\nID: #{pending_id}"
 
         kb = preview_keyboard(pending_id)
         sent_any = False
@@ -152,7 +152,12 @@ def make_send_preview(bot: Bot, pyrogram_app):
 
 
 def build_app() -> Application:
-    app = Application.builder().token(settings.BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(settings.BOT_TOKEN)
+        .parse_mode("HTML")
+        .build()
+    )
 
     conv_fallbacks = [
         CommandHandler("cancel", cancel),

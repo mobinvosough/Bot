@@ -92,7 +92,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def _start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "👋 Welcome! Let's set up your bot.\n\n"
-        "Step 1/3: Send the **Target Channel** (username or ID)\n"
+        "Step 1/3: Send the <b>Target Channel</b> (username or ID)\n"
         "where approved messages will be posted.",
         reply_markup=setup_target_keyboard(),
     )
@@ -107,7 +107,7 @@ async def setup_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await log_action(update.effective_user.id, f"setup_target:{text}")
     await update.message.reply_text(
         f"✅ Target set to: {text}\n\n"
-        "Step 2/3: Send a **Source Channel** (username or ID)\n"
+        "Step 2/3: Send a <b>Source Channel</b> (username or ID)\n"
         "You can add more later from the menu.",
     )
     return SETUP_SOURCE
@@ -121,7 +121,7 @@ async def setup_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await log_action(update.effective_user.id, f"setup_source:{text}")
     await update.message.reply_text(
         f"✅ Source added: {text}\n\n"
-        "Step 3/3: Send an **Admin User ID** to manage the bot.\n"
+        "Step 3/3: Send an <b>Admin User ID</b> to manage the bot.\n"
         "You can add more later from the menu.",
     )
     return SETUP_ADMIN
