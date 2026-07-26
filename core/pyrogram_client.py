@@ -1,5 +1,4 @@
 import asyncio
-import re
 from typing import Callable, Awaitable
 
 from pyrogram import Client
@@ -10,32 +9,19 @@ from loguru import logger
 from config import settings
 from core.database import (
     get_source_channels,
-    get_admins,
     is_message_processed,
     save_pending_message,
-    get_setting,
 )
-from bot.keyboards import preview_keyboard
+from utils.cleaner import clean_text
 
 POLL_INTERVAL = 20
+RECONNECT_INTERVAL = 30
 SUPPORTED_TYPES = {MessageMediaType.PHOTO, MessageMediaType.VIDEO, None}
 TYPE_LABELS = {
     None: "Text",
     MessageMediaType.PHOTO: "Photo",
     MessageMediaType.VIDEO: "Video",
 }
-
-
-def clean_text(text: str | None) -> str | None:
-    if not text:
-        return text
-    lines = text.splitlines()
-    cleaned = [
-        line for line in lines
-        if not re.match(r"^\s*(@|🆔@)", line)
-    ]
-    result = "\n".join(cleaned).strip()
-    return result if result else None
 
 
 class SourceWatcher:
@@ -152,17 +138,49 @@ class PyrogramClient:
             phone_number=settings.PHONE_NUMBER,
         )
         self.watcher: SourceWatcher | None = None
+        self._reconnect_task: asyncio.Task | None = None
 
     async def start(self, send_preview: Callable[..., Awaitable]):
         logger.info("Starting Pyrogram client...")
-        await self.client.start()
-        logger.info("Pyrogram client started")
+        await self._connect_with_retry()
         self.watcher = SourceWatcher(self.client, send_preview)
         await self.watcher.start()
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def stop(self):
         logger.info("Stopping Pyrogram client...")
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
         if self.watcher:
             await self.watcher.stop()
-        await self.client.stop()
+        try:
+            await self.client.stop()
+        except Exception:
+            pass
         logger.info("Pyrogram client stopped")
+
+    async def _connect_with_retry(self):
+        while True:
+            try:
+                await self.client.start()
+                logger.info("Pyrogram client connected")
+                return
+            except Exception:
+                logger.warning("Pyrogram connect failed, retrying in {}s", RECONNECT_INTERVAL)
+                await asyncio.sleep(RECONNECT_INTERVAL)
+
+    async def _reconnect_loop(self):
+        while True:
+            await asyncio.sleep(60)
+            try:
+                if not self.client.is_connected:
+                    logger.warning("Pyrogram disconnected, reconnecting...")
+                    await self._connect_with_retry()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Reconnect check failed")

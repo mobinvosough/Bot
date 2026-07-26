@@ -7,7 +7,7 @@ from telegram.ext import (
     CommandHandler,
     filters,
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 from loguru import logger
 
 from config import settings
@@ -29,7 +29,10 @@ from core.database import (
     get_admin_username,
     get_active_queue_items,
     cancel_queue_item,
+    count_pending,
+    get_recent_actions,
 )
+from utils.cleaner import clean_and_tag
 from bot.keyboards import (
     main_menu_keyboard,
     setup_source_confirm_keyboard,
@@ -131,7 +134,6 @@ async def setup_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if update.message.text and update.message.text.strip() == "/done":
         admins = await get_admins()
         if not admins:
-            # At least keep the .env admins
             for aid in settings.ADMIN_IDS:
                 await add_admin(aid)
             admins = await get_admins()
@@ -162,6 +164,9 @@ async def setup_phone_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
 
     if query.data == "setup_source_done":
+        existing = await get_setting("custom_tag")
+        if not existing:
+            await set_setting("custom_tag", settings.DEFAULT_CUSTOM_TAG)
         await set_setting("setup_complete", "true")
         await log_action(update.effective_user.id, "setup_completed")
         await query.edit_message_text(
@@ -208,14 +213,33 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     sources = await get_source_channels()
     admins = await get_admins()
     tag = await get_setting("custom_tag") or "Not set"
+    queue_items = await get_active_queue_items()
+    pending_count = await count_pending()
+    actions = await get_recent_actions(5)
+
+    next_post = "N/A"
+    if queue_items:
+        try:
+            dt = datetime.fromisoformat(queue_items[0]["scheduled_time"])
+            next_post = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, TypeError):
+            next_post = queue_items[0]["scheduled_time"]
 
     text = (
         "📊 Bot Status\n\n"
         f"Target: {target}\n"
         f"Sources: {len(sources)} ({', '.join(sources) if sources else 'none'})\n"
         f"Admins: {len(admins)}\n"
-        f"Custom Tag: {tag}\n"
+        f"Queue: {len(queue_items)} items | Next: {next_post}\n"
+        f"Pending messages: {pending_count}\n"
+        f"Custom Tag:\n{tag}\n"
     )
+
+    if actions:
+        text += "\nLast actions:\n"
+        for a in actions:
+            text += f"  - {a['action']} (admin {a['admin_id']})\n"
+
     await query.edit_message_text(text, reply_markup=back_to_menu_keyboard())
 
 
@@ -316,17 +340,22 @@ async def menu_change_tag_entry(
     await query.answer()
     current = await get_setting("custom_tag") or "Not set"
     await query.edit_message_text(
-        f"Current tag: {current}\n\nSend me the new custom tag."
+        f"Current tag:\n{current}\n\nSend me the new custom tag (multi-line supported)."
     )
     return CHANGE_TAG
 
 
 async def change_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
+    text = update.message.text
+    if text:
+        text = text.strip()
+    if not text:
+        await update.message.reply_text("Tag cannot be empty. Send a tag or /cancel.")
+        return CHANGE_TAG
     await set_setting("custom_tag", text)
-    await log_action(update.effective_user.id, f"tag_changed:{text}")
+    await log_action(update.effective_user.id, f"tag_changed")
     await update.message.reply_text(
-        f"Tag updated to: {text}", reply_markup=main_menu_keyboard()
+        f"Tag updated to:\n{text}", reply_markup=main_menu_keyboard()
     )
     return ConversationHandler.END
 
@@ -388,13 +417,6 @@ ACTION_LABELS = {
     "sent": "Sent Now",
     "rejected": "Rejected",
 }
-
-
-async def _get_action_claimer(pending_id: int) -> int | None:
-    pending = await get_pending_by_id(pending_id)
-    if pending and pending.get("acted_by"):
-        return pending["acted_by"]
-    return None
 
 
 async def _notify_other_admins(
@@ -464,7 +486,6 @@ async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await _handle_preview_action(update, pending_id, "queued")
 
     last_time = await get_last_queue_time()
-    from datetime import datetime, timedelta
 
     if last_time:
         try:
@@ -505,10 +526,9 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.message.reply_text("Error: No target channel configured.")
         return
 
-    tag = await get_setting("custom_tag") or ""
-    text = pending.get("text_or_caption") or ""
-    if tag:
-        text = f"{text}\n\n{tag}" if text else tag
+    tag = await get_setting("custom_tag")
+    raw_text = pending.get("text_or_caption") or ""
+    text = clean_and_tag(raw_text, tag)
 
     content_type = pending.get("content_type", "Text")
     media_id = pending.get("media_file_id")
@@ -519,26 +539,24 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if pyrogram_client and pyrogram_client.client:
             if content_type == "Photo" and media_id:
                 await pyrogram_client.client.send_photo(
-                    chat_id=target,
-                    photo=media_id,
-                    caption=text,
+                    chat_id=target, photo=media_id, caption=text
                 )
             elif content_type == "Video" and media_id:
                 await pyrogram_client.client.send_video(
-                    chat_id=target,
-                    video=media_id,
-                    caption=text,
+                    chat_id=target, video=media_id, caption=text
                 )
             elif source_chat and msg_id:
+                from_chat = (
+                    int(source_chat)
+                    if source_chat.lstrip("-").isdigit()
+                    else source_chat
+                )
                 await pyrogram_client.client.copy_message(
-                    chat_id=target,
-                    from_chat_id=int(source_chat) if source_chat.lstrip("-").isdigit() else source_chat,
-                    message_id=msg_id,
+                    chat_id=target, from_chat_id=from_chat, message_id=msg_id
                 )
             else:
                 await pyrogram_client.client.send_message(
-                    chat_id=target,
-                    text=text,
+                    chat_id=target, text=text
                 )
             await query.message.reply_text(f"Sent to {target}.")
         else:

@@ -150,6 +150,16 @@ async def log_action(admin_id: int, action: str, message_id: int | None = None):
     await db.commit()
 
 
+async def get_recent_actions(limit: int = 5) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT action, admin_id, timestamp FROM actions_log ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    rows = await cursor.fetchall()
+    return [{"action": r["action"], "admin_id": r["admin_id"], "timestamp": r["timestamp"]} for r in rows]
+
+
 async def is_message_processed(source_channel: str, message_id: int) -> bool:
     db = await get_db()
     cursor = await db.execute(
@@ -176,24 +186,6 @@ async def save_pending_message(
     return cursor.lastrowid
 
 
-async def update_pending_status(pending_id: int, status: str):
-    db = await get_db()
-    await db.execute(
-        "UPDATE pending_messages SET status = ? WHERE id = ?",
-        (status, pending_id),
-    )
-    await db.commit()
-
-
-async def get_pending_by_id(pending_id: int) -> dict | None:
-    db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM pending_messages WHERE id = ?", (pending_id,)
-    )
-    row = await cursor.fetchone()
-    return dict(row) if row else None
-
-
 async def update_pending_status(pending_id: int, status: str, acted_by: int | None = None):
     db = await get_db()
     if acted_by is not None:
@@ -207,6 +199,24 @@ async def update_pending_status(pending_id: int, status: str, acted_by: int | No
             (status, pending_id),
         )
     await db.commit()
+
+
+async def get_pending_by_id(pending_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pending_messages WHERE id = ?", (pending_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def count_pending() -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM pending_messages WHERE status = 'pending'"
+    )
+    row = await cursor.fetchone()
+    return row["cnt"] if row else 0
 
 
 async def get_last_queue_time() -> str | None:

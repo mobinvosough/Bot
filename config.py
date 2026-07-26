@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_CUSTOM_TAG = "\U0001f916: @mitsellerbot\n\U0001f9d1\u200d\U0001f4bb 24/7 : @MITsupports"
+
 
 class Settings:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
@@ -14,6 +16,7 @@ class Settings:
     ]
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "bot.db")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    DEFAULT_CUSTOM_TAG: str = DEFAULT_CUSTOM_TAG
 
 
 settings = Settings()

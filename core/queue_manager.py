@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 from loguru import logger
 from pyrogram import Client
 
@@ -11,6 +10,7 @@ from core.database import (
     get_admins,
     log_action,
 )
+from utils.cleaner import clean_and_tag
 
 QUEUE_INTERVAL = 9000
 
@@ -58,22 +58,20 @@ class QueueWorker:
             logger.warning("QueueWorker: no target channel configured, skipping")
             return
 
-        tag = await get_setting("custom_tag") or ""
+        tag = await get_setting("custom_tag")
 
         for item in items:
             await self._send_item(item, target, tag)
 
-    async def _send_item(self, item: dict, target: str, tag: str):
+    async def _send_item(self, item: dict, target: str, tag: str | None):
         queue_id = item["queue_id"]
         pending_id = item["pending_id"]
         content_type = item.get("content_type", "Text")
-        text = item.get("text_or_caption") or ""
+        raw_text = item.get("text_or_caption") or ""
+        text = clean_and_tag(raw_text, tag)
         media_id = item.get("media_file_id")
         source_chat = item.get("source_channel")
         msg_id = item.get("message_id")
-
-        if tag:
-            text = f"{text}\n\n{tag}" if text else tag
 
         try:
             if content_type == "Photo" and media_id:

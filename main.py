@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import sys
 from pathlib import Path
 
@@ -152,7 +153,6 @@ def build_app() -> Application:
     app.add_handler(
         CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:")
     )
-
     app.add_handler(
         CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:")
     )
@@ -178,13 +178,10 @@ def make_send_preview(bot: Bot):
         pyrogram_msg=None,
     ):
         admins = await get_admins()
-        tag = await get_setting("custom_tag") or ""
-        header = f"**{content_type}** from `{source_label}`\n"
-        if tag:
-            header += f"Tag: {tag}\n"
-        if text:
-            header += f"\n{text}"
-        header += f"\n\nID: #{pending_id}"
+        tag = await get_setting("custom_tag")
+        from utils.cleaner import clean_and_tag
+        display_text = clean_and_tag(text, tag)
+        header = f"**{content_type}** from `{source_label}`\n\n{display_text}\n\nID: #{pending_id}"
 
         kb = preview_keyboard(pending_id)
 
@@ -241,13 +238,9 @@ async def main():
     def _signal_handler():
         stop_event.set()
 
-    try:
-        import signal
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, _signal_handler)
-    except NotImplementedError:
-        pass
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _signal_handler)
 
     await stop_event.wait()
 
