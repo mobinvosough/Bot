@@ -82,7 +82,7 @@ def remove_pid():
     PID_FILE.unlink(missing_ok=True)
 
 
-def make_send_preview(bot: Bot):
+def make_send_preview(bot: Bot, pyrogram_app):
     async def send_preview(
         pending_id: int,
         source_label: str,
@@ -104,7 +104,7 @@ def make_send_preview(bot: Bot):
             try:
                 if pyrogram_msg and content_type == "Photo" and pyrogram_msg.photo:
                     buf = io.BytesIO()
-                    await pyrogram_msg.download_media(buf)
+                    await pyrogram_app.download_media(pyrogram_msg, file_name=buf)
                     buf.seek(0)
                     await bot.send_photo(
                         chat_id=uid,
@@ -115,7 +115,7 @@ def make_send_preview(bot: Bot):
                     sent_any = True
                 elif pyrogram_msg and content_type == "Video" and pyrogram_msg.video:
                     buf = io.BytesIO()
-                    await pyrogram_msg.download_media(buf)
+                    await pyrogram_app.download_media(pyrogram_msg, file_name=buf)
                     buf.seek(0)
                     await bot.send_video(
                         chat_id=uid,
@@ -260,7 +260,7 @@ async def main():
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
 
-    send_preview = make_send_preview(app.bot)
+    send_preview = make_send_preview(app.bot, pyrogram_client.client)
     handlers.pyrogram_client = pyrogram_client
 
     try:
