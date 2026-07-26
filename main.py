@@ -19,6 +19,7 @@ from config import settings
 from utils.logger import setup_logger
 from core.database import get_db, close_db, get_admins, get_setting
 from core.pyrogram_client import PyrogramClient
+from core.queue_manager import QueueWorker
 import bot.handlers as handlers
 from bot.handlers import (
     SETUP_TARGET,
@@ -57,10 +58,12 @@ from bot.handlers import (
     preview_add_queue,
     preview_send_now,
     preview_reject,
+    cancel_queue_cb,
 )
 from bot.keyboards import preview_keyboard
 
 pyrogram_client = PyrogramClient()
+queue_worker = QueueWorker(pyrogram_client.client)
 
 
 def build_app() -> Application:
@@ -159,6 +162,9 @@ def build_app() -> Application:
     app.add_handler(
         CallbackQueryHandler(preview_reject, pattern=r"^preview_reject:")
     )
+    app.add_handler(
+        CallbackQueryHandler(cancel_queue_cb, pattern=r"^cancel_queue:")
+    )
 
     return app
 
@@ -226,6 +232,7 @@ async def main():
     send_preview = make_send_preview(app.bot)
     handlers.pyrogram_client = pyrogram_client
     await pyrogram_client.start(send_preview)
+    await queue_worker.start()
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
 
@@ -245,6 +252,7 @@ async def main():
     await stop_event.wait()
 
     logger.info("Shutting down...")
+    await queue_worker.stop()
     await pyrogram_client.stop()
     await app.updater.stop()
     await app.stop()

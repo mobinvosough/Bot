@@ -1,3 +1,4 @@
+from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -100,3 +101,21 @@ def preview_keyboard(pending_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def queue_list_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for item in items:
+        qid = item["queue_id"]
+        ctype = item.get("content_type", "?")
+        sched = item.get("scheduled_time", "?")
+        try:
+            dt = datetime.fromisoformat(sched)
+            label = f"{ctype} | {dt.strftime('%m-%d %H:%M')}"
+        except (ValueError, TypeError):
+            label = f"{ctype} | {sched}"
+        rows.append(
+            [InlineKeyboardButton(f"❌ {label}", callback_data=f"cancel_queue:{qid}")]
+        )
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)

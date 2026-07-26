@@ -237,3 +237,50 @@ async def get_admin_username(user_id: int) -> str:
     if row and row["username"]:
         return f"@{row['username']}"
     return str(user_id)
+
+
+async def get_active_queue_items() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT q.id AS queue_id, q.pending_id, q.scheduled_time, q.status, "
+        "q.added_by, p.source_channel, p.message_id, p.content_type, "
+        "p.text_or_caption, p.media_file_id "
+        "FROM queue q JOIN pending_messages p ON q.pending_id = p.id "
+        "WHERE q.status = 'pending' ORDER BY q.id ASC"
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_due_queue_items() -> list[dict]:
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT q.id AS queue_id, q.pending_id, q.scheduled_time, q.status, "
+        "q.added_by, p.source_channel, p.message_id, p.content_type, "
+        "p.text_or_caption, p.media_file_id "
+        "FROM queue q JOIN pending_messages p ON q.pending_id = p.id "
+        "WHERE q.status = 'pending' AND q.scheduled_time <= ? ORDER BY q.id ASC",
+        (now,),
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def update_queue_status(queue_id: int, status: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE queue SET status = ? WHERE id = ?", (status, queue_id)
+    )
+    await db.commit()
+
+
+async def cancel_queue_item(queue_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE queue SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+        (queue_id,),
+    )
+    await db.commit()
+    return cursor.rowcount > 0

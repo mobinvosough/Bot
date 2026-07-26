@@ -7,6 +7,7 @@ from telegram.ext import (
     CommandHandler,
     filters,
 )
+from datetime import datetime
 from loguru import logger
 
 from config import settings
@@ -26,6 +27,8 @@ from core.database import (
     get_last_queue_time,
     add_to_queue,
     get_admin_username,
+    get_active_queue_items,
+    cancel_queue_item,
 )
 from bot.keyboards import (
     main_menu_keyboard,
@@ -35,6 +38,7 @@ from bot.keyboards import (
     settings_keyboard,
     back_to_menu_keyboard,
     preview_keyboard,
+    queue_list_keyboard,
 )
 
 pyrogram_client = None
@@ -330,9 +334,23 @@ async def change_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def menu_view_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "📋 Queue is empty.", reply_markup=back_to_menu_keyboard()
-    )
+    items = await get_active_queue_items()
+    if not items:
+        await query.edit_message_text(
+            "📋 Queue is empty.", reply_markup=back_to_menu_keyboard()
+        )
+        return
+    text = f"📋 Queue ({len(items)} items)\n\n"
+    for i, item in enumerate(items, 1):
+        ctype = item.get("content_type", "?")
+        sched = item.get("scheduled_time", "?")
+        try:
+            dt = datetime.fromisoformat(sched)
+            sched_fmt = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, TypeError):
+            sched_fmt = sched
+        text += f"{i}. {ctype} — scheduled {sched_fmt}\n"
+    await query.edit_message_text(text, reply_markup=queue_list_keyboard(items))
 
 
 async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -534,3 +552,20 @@ async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     pending_id = int(query.data.split(":")[1])
     await _handle_preview_action(update, pending_id, "rejected")
+
+
+async def cancel_queue_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    qid = int(query.data.split(":")[1])
+    removed = await cancel_queue_item(qid)
+    await log_action(update.effective_user.id, f"queue_cancelled:{qid}")
+    if removed:
+        await query.edit_message_text(f"Queue item #{qid} cancelled.")
+    else:
+        await query.edit_message_text(f"Queue item #{qid} not found or already processed.")
+    items = await get_active_queue_items()
+    if items:
+        await query.message.reply_text(
+            "Updated queue:", reply_markup=queue_list_keyboard(items)
+        )
