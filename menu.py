@@ -5,14 +5,15 @@ import os
 import sys
 import signal
 import subprocess
-import threading
 import time
 from pathlib import Path
 
 try:
     from rich.console import Console
     from rich.panel import Panel
+    from rich.table import Table
     from rich.text import Text
+    from rich.columns import Columns
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
@@ -20,7 +21,6 @@ except ImportError:
 ROOT_DIR = Path(__file__).parent
 PID_FILE = ROOT_DIR / "bot.pid"
 LOG_FILE = ROOT_DIR / "logs" / "bot.log"
-MAX_LOG_SIZE = 20 * 1024 * 1024
 
 console = Console() if HAS_RICH else None
 
@@ -50,57 +50,72 @@ def get_pid() -> int | None:
         return None
 
 
-def show_banner(status: str = ""):
+def show_banner():
     clear()
     if HAS_RICH:
-        title = Text("ContentForwardBot", style="bold cyan")
-        subtitle = Text("Terminal Control Menu", style="dim")
-        console.print(Panel.fit(title, subtitle=subtitle))
-        if status:
-            console.print(f"  {status}")
+        lines = [
+            "[bold white]ContentForwardBot[/bold white]",
+            "[dim]Terminal Control Panel[/dim]",
+        ]
+        console.print()
+        console.print(Panel.fit(
+            "\n".join(lines),
+            border_style="bright_blue",
+            padding=(0, 2),
+        ))
         console.print()
     else:
-        print("=" * 50)
-        print("      ContentForwardBot")
-        print("      Terminal Control Menu")
-        print("=" * 50)
-        if status:
-            print(f"  {status}")
+        print()
+        print("  +--------------------------------------+")
+        print("  |        ContentForwardBot             |")
+        print("  |        Terminal Control Panel        |")
+        print("  +--------------------------------------+")
         print()
 
 
 def show_menu():
     running = is_bot_running()
-    status = "[bold green]● Running[/bold green]" if running else "[bold red]● Stopped[/bold red]"
-    show_banner(status)
+    show_banner()
 
     if HAS_RICH:
-        options = [
-            ("1", "🚀 Start Bot",     "green"  if not running else "dim"),
-            ("2", "🛑 Stop Bot",      "red"    if running else "dim"),
-            ("3", "📋 View Live Logs", "cyan"),
-            ("4", "🔄 Git Pull",      "yellow"),
-            ("5", "❌ Exit",          "white"),
-        ]
-        for num, label, style in options:
-            console.print(f"  [bold {style}]{num}. {label}[/bold {style}]")
+        if running:
+            console.print("  Status: [bold green]RUNNING[/bold green]")
+        else:
+            console.print("  Status: [bold red]STOPPED[/bold red]")
+        console.print()
+        console.print("  [dim]---[/dim]")
+        console.print()
+
+        table = Table(show_header=False, show_edge=False, padding=(0, 1))
+        table.add_column("num", style="bold bright_blue", width=4)
+        table.add_column("action", style="bold white")
+        table.add_column("desc", style="dim")
+
+        s1 = "dim" if running else "bold green"
+        s2 = "dim" if not running else "bold red"
+        table.add_row("1.", "[green]Start Bot[/green]", "Launch in background", style=s1)
+        table.add_row("2.", "[red]Stop Bot[/red]", "Terminate process", style=s2)
+        table.add_row("3.", "[cyan]Live Logs[/cyan]", "Real-time log viewer")
+        table.add_row("4.", "[yellow]Git Pull[/yellow]", "Update from repository")
+        table.add_row("5.", "[white]Exit[/white]", "Close this panel")
+        console.print(table)
         console.print()
     else:
-        status_text = "Running" if running else "Stopped"
-        print(f"  Status: {status_text}")
+        status = "RUNNING" if running else "STOPPED"
+        print(f"  Status: {status}")
         print()
-        print("  1. 🚀 Start Bot")
-        print("  2. 🛑 Stop Bot")
-        print("  3. 📋 View Live Logs")
-        print("  4. 🔄 Git Pull")
-        print("  5. ❌ Exit")
+        print("  1.  Start Bot         Launch in background")
+        print("  2.  Stop Bot          Terminate process")
+        print("  3.  Live Logs         Real-time log viewer")
+        print("  4.  Git Pull          Update from repository")
+        print("  5.  Exit              Close this panel")
         print()
 
 
 def get_choice() -> str:
     if HAS_RICH:
-        return console.input("  [bold]Select option > [/bold]").strip()
-    return input("  Select option > ").strip()
+        return console.input("  [bold bright_blue]>[/bold bright_blue] ").strip()
+    return input("  > ").strip()
 
 
 def action_start():
@@ -113,22 +128,22 @@ def action_start():
 
     if not ROOT_DIR.joinpath("main.py").exists():
         if HAS_RICH:
-            console.print("\n  [red]main.py not found in project directory.[/red]")
+            console.print("\n  [red]main.py not found.[/red]")
         else:
-            print("\n  main.py not found in project directory.")
+            print("\n  main.py not found.")
         return
 
     if not ROOT_DIR.joinpath(".env").exists():
         if HAS_RICH:
-            console.print("\n  [red].env file not found. Copy .env.example to .env and configure it.[/red]")
+            console.print("\n  [red].env file not found. Configure .env first.[/red]")
         else:
             print("\n  .env file not found.")
         return
 
     if HAS_RICH:
-        console.print("\n  [cyan]Starting bot in background...[/cyan]")
+        console.print("\n  [cyan]Starting bot...[/cyan]")
     else:
-        print("\n  Starting bot in background...")
+        print("\n  Starting bot...")
 
     log_path = ROOT_DIR / "logs"
     log_path.mkdir(exist_ok=True)
@@ -147,15 +162,15 @@ def action_start():
     time.sleep(1)
     if process.poll() is None:
         if HAS_RICH:
-            console.print(f"  [green]Bot started (PID: {process.pid})[/green]")
+            console.print(f"  [green]Bot started  [dim]PID {process.pid}[/dim][/green]")
         else:
             print(f"  Bot started (PID: {process.pid})")
     else:
         PID_FILE.unlink(missing_ok=True)
         if HAS_RICH:
-            console.print("  [red]Bot failed to start. Check logs/bot.log[/red]")
+            console.print("  [red]Failed to start. Check logs/bot.log[/red]")
         else:
-            print("  Bot failed to start. Check logs/bot.log")
+            print("  Failed to start. Check logs/bot.log")
 
 
 def action_stop():
@@ -168,7 +183,7 @@ def action_stop():
         return
 
     if HAS_RICH:
-        console.print(f"\n  [cyan]Stopping bot (PID: {pid})...[/cyan]")
+        console.print(f"\n  [cyan]Stopping bot [dim]PID {pid}[/dim]...[/cyan]")
     else:
         print(f"\n  Stopping bot (PID: {pid})...")
 
@@ -189,9 +204,9 @@ def action_stop():
         pass
     except PermissionError:
         if HAS_RICH:
-            console.print("  [red]Permission denied. Try running with sudo.[/red]")
+            console.print("  [red]Permission denied.[/red]")
         else:
-            print("  Permission denied. Try running with sudo.")
+            print("  Permission denied.")
         return
 
     PID_FILE.unlink(missing_ok=True)
@@ -205,15 +220,25 @@ def action_view_logs():
     log_path = ROOT_DIR / "logs" / "bot.log"
 
     if HAS_RICH:
-        console.print("\n  [cyan]Live Logs — press [bold]q[/bold] to return to menu[/cyan]\n")
+        console.print()
+        console.print(Panel(
+            "[bold]Live Logs[/bold]  [dim]|  press [bold]q[/bold] to return[/dim]",
+            border_style="bright_blue",
+            padding=(0, 1),
+        ))
+        console.print()
     else:
-        print("\n  Live Logs — press q to return to menu\n")
+        print()
+        print("  Live Logs  |  press q to return")
+        print("  " + "-" * 40)
+        print()
 
     if not log_path.exists():
         if HAS_RICH:
-            console.print("  [dim]No log file yet. Waiting for logs...[/dim]\n")
+            console.print("  [dim]No logs yet. Waiting...[/dim]")
         else:
-            print("  No log file yet. Waiting for logs...\n")
+            print("  No logs yet. Waiting...")
+        time.sleep(1)
 
     try:
         import tty
