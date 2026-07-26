@@ -102,12 +102,12 @@ def _fold_configs(text: str) -> str:
             continue
         else:
             if config_buf:
-                result.append("> " + "\n> ".join(config_buf))
+                result.append("<blockquote>" + "\n".join(config_buf) + "</blockquote>")
                 config_buf = []
             result.append(line)
 
     if config_buf:
-        result.append("> " + "\n> ".join(config_buf))
+        result.append("<blockquote>" + "\n".join(config_buf) + "</blockquote>")
 
     return "\n".join(result)
 
