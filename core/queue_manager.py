@@ -1,6 +1,4 @@
 import asyncio
-import os
-import tempfile
 from loguru import logger
 from pyrogram import Client
 
@@ -71,38 +69,21 @@ class QueueWorker:
         content_type = item.get("content_type", "Text")
         raw_text = item.get("text_or_caption") or ""
         text = clean_and_tag(raw_text, tag)
-        source_chat = item.get("source_channel")
-        msg_id = item.get("message_id")
-        tmp_path = None
+        media_id = item.get("media_file_id")
 
         try:
-            from_chat = (
-                int(source_chat)
-                if source_chat and source_chat.lstrip("-").isdigit()
-                else source_chat
-            )
-
-            if content_type == "Photo" and from_chat and msg_id:
-                tmp_path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
-                orig_msg = await self._client.get_messages(from_chat, msg_id)
-                if orig_msg and orig_msg.photo:
-                    await self._client.download_media(orig_msg, file_name=tmp_path)
-                    await self._client.send_photo(
-                        chat_id=target, photo=tmp_path, caption=text
-                    )
-                else:
-                    await self._client.send_message(chat_id=target, text=text)
-            elif content_type == "Video" and from_chat and msg_id:
-                tmp_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-                orig_msg = await self._client.get_messages(from_chat, msg_id)
-                if orig_msg and orig_msg.video:
-                    await self._client.download_media(orig_msg, file_name=tmp_path)
-                    await self._client.send_video(
-                        chat_id=target, video=tmp_path, caption=text
-                    )
-                else:
-                    await self._client.send_message(chat_id=target, text=text)
+            if content_type == "Photo" and media_id:
+                logger.info("QueueWorker: sending Photo via file_id pending_id={}", pending_id)
+                await self._client.send_photo(
+                    chat_id=target, photo=media_id, caption=text
+                )
+            elif content_type == "Video" and media_id:
+                logger.info("QueueWorker: sending Video via file_id pending_id={}", pending_id)
+                await self._client.send_video(
+                    chat_id=target, video=media_id, caption=text
+                )
             else:
+                logger.info("QueueWorker: sending Text pending_id={}", pending_id)
                 await self._client.send_message(chat_id=target, text=text)
 
             await update_queue_status(queue_id, "sent")
@@ -118,12 +99,6 @@ class QueueWorker:
         except Exception:
             logger.exception("QueueWorker: failed to send pending_id={}", pending_id)
             await update_queue_status(queue_id, "failed")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     async def _notify_admins(self, pending_id: int, target: str):
         admins = await get_admins()

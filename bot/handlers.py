@@ -8,8 +8,6 @@ from telegram.ext import (
     filters,
 )
 from datetime import datetime, timedelta
-import os
-import tempfile
 from loguru import logger
 
 from config import settings
@@ -50,8 +48,11 @@ pyrogram_client = None
 SET_TARGET, SET_SOURCE, SET_TAG, SET_ADMIN, SETUP_TARGET, SETUP_SOURCE, SETUP_ADMIN = range(7)
 
 
-def is_admin(user_id: int) -> bool:
-    return user_id in settings.ADMIN_IDS
+async def is_admin(user_id: int) -> bool:
+    if user_id in settings.ADMIN_IDS:
+        return True
+    admins = await get_admins()
+    return any(a["user_id"] == user_id for a in admins)
 
 
 # ── /start ──────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ def is_admin(user_id: int) -> bool:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
-    if not is_admin(user.id):
+    if not await is_admin(user.id):
         return
 
     setup_done = await is_setup_complete()
@@ -100,7 +101,7 @@ async def _start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def setup_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     await set_setting("target_channel", text)
@@ -114,7 +115,7 @@ async def setup_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def setup_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     await add_source_channel(text)
@@ -128,7 +129,7 @@ async def setup_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def setup_admin_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     try:
@@ -166,7 +167,7 @@ async def menu_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 
 async def set_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     await set_setting("target_channel", text)
@@ -194,7 +195,7 @@ async def menu_add_source_entry(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def add_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     await add_source_channel(text)
@@ -225,7 +226,7 @@ async def menu_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def set_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text
     if text:
@@ -258,7 +259,7 @@ async def menu_add_admin_entry(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def add_admin_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
+    if not await is_admin(update.effective_user.id):
         return ConversationHandler.END
     text = update.message.text.strip()
     try:
@@ -548,73 +549,49 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer("No target channel configured.", show_alert=True)
         return
 
-    await query.answer("Sending...")
-
     tag = await get_setting("custom_tag")
     raw_text = pending.get("text_or_caption") or ""
     text = clean_and_tag(raw_text, tag)
 
     content_type = pending.get("content_type", "Text")
-    source_chat = pending.get("source_channel")
-    msg_id = pending.get("message_id")
-    tmp_path = None
+    media_id = pending.get("media_file_id")
 
     try:
-        if pyrogram_client and pyrogram_client.client:
-            from_chat = (
-                int(source_chat)
-                if source_chat and source_chat.lstrip("-").isdigit()
-                else source_chat
-            )
+        await query.answer("Sending...")
+    except Exception:
+        pass
 
-            if content_type == "Photo" and from_chat and msg_id:
-                tmp_path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
-                orig_msg = await pyrogram_client.client.get_messages(from_chat, msg_id)
-                if orig_msg and orig_msg.photo:
-                    await pyrogram_client.client.download_media(orig_msg, file_name=tmp_path)
-                    await pyrogram_client.client.send_photo(
-                        chat_id=target, photo=tmp_path, caption=text
-                    )
-                else:
-                    await pyrogram_client.client.send_message(
-                        chat_id=target, text=text
-                    )
-            elif content_type == "Video" and from_chat and msg_id:
-                tmp_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-                orig_msg = await pyrogram_client.client.get_messages(from_chat, msg_id)
-                if orig_msg and orig_msg.video:
-                    await pyrogram_client.client.download_media(orig_msg, file_name=tmp_path)
-                    await pyrogram_client.client.send_video(
-                        chat_id=target, video=tmp_path, caption=text
-                    )
-                else:
-                    await pyrogram_client.client.send_message(
-                        chat_id=target, text=text
-                    )
-            else:
-                await pyrogram_client.client.send_message(
-                    chat_id=target, text=text
-                )
-
-            await update_pending_status(pending_id, "sent", acted_by=user.id)
-            await log_action(user.id, f"send_now:{pending_id}")
-
-            await query.edit_message_reply_markup(reply_markup=None)
-            await query.message.reply_text(
-                f"Message #{pending_id}: Sent Now by you.\n"
-                f"Delivered to: {target}"
-            )
-        else:
+    try:
+        if not (pyrogram_client and pyrogram_client.client):
             await query.answer("Pyrogram client not available.", show_alert=True)
+            return
+
+        client = pyrogram_client.client
+
+        if content_type == "Photo" and media_id:
+            logger.info("Send Now #{}: sending Photo via file_id to {}", pending_id, target)
+            await client.send_photo(chat_id=target, photo=media_id, caption=text)
+        elif content_type == "Video" and media_id:
+            logger.info("Send Now #{}: sending Video via file_id to {}", pending_id, target)
+            await client.send_video(chat_id=target, video=media_id, caption=text)
+        else:
+            logger.info("Send Now #{}: sending Text to {}", pending_id, target)
+            await client.send_message(chat_id=target, text=text)
+
+        await update_pending_status(pending_id, "sent", acted_by=user.id)
+        await log_action(user.id, f"send_now:{pending_id}")
+
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(
+            f"Message #{pending_id}: Sent Now by you.\n"
+            f"Delivered to: {target}"
+        )
     except Exception:
         logger.exception("Failed to forward message #{}", pending_id)
-        await query.answer("Failed to forward message.", show_alert=True)
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        try:
+            await query.answer("Failed to forward message.", show_alert=True)
+        except Exception:
+            pass
 
 
 async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
