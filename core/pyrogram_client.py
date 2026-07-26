@@ -134,15 +134,12 @@ class SourceWatcher:
 
 class PyrogramClient:
     def __init__(self):
-        session_exists = Path(f"{SESSION_NAME}.session").exists()
-        client_args = dict(
+        self.client = Client(
             name=SESSION_NAME,
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
+            phone_number=settings.PHONE_NUMBER,
         )
-        if not session_exists:
-            client_args["phone_number"] = settings.PHONE_NUMBER
-        self.client = Client(**client_args)
         self.watcher: SourceWatcher | None = None
         self._reconnect_task: asyncio.Task | None = None
 
