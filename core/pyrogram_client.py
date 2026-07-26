@@ -145,11 +145,12 @@ class PyrogramClient:
         self.watcher: SourceWatcher | None = None
         self._reconnect_task: asyncio.Task | None = None
 
-    async def start(self, send_preview: Callable[..., Awaitable]):
+    async def start(self, send_preview: Callable[..., Awaitable] | None = None):
         logger.info("Starting Pyrogram client...")
         await self._connect_with_retry()
-        self.watcher = SourceWatcher(self.client, send_preview)
-        await self.watcher.start()
+        if send_preview:
+            self.watcher = SourceWatcher(self.client, send_preview)
+            await self.watcher.start()
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def stop(self):

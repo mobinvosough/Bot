@@ -34,10 +34,8 @@ from core.database import (
 from utils.cleaner import clean_and_tag
 from bot.keyboards import (
     main_menu_keyboard,
-    setup_source_confirm_keyboard,
     admin_list_keyboard,
     source_list_keyboard,
-    settings_keyboard,
     back_to_menu_keyboard,
     preview_keyboard,
     queue_list_keyboard,
@@ -45,164 +43,136 @@ from bot.keyboards import (
 
 pyrogram_client = None
 
-(
-    SETUP_TARGET,
-    SETUP_SOURCE,
-    SETUP_SOURCE_CONFIRM,
-    SETUP_ADMINS,
-    SETUP_PHONE,
-    ADD_SOURCE,
-    CHANGE_TARGET,
-    ADD_ADMIN,
-    CHANGE_TAG,
-) = range(9)
+SET_TARGET, SET_SOURCE, SET_TAG = range(3)
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in settings.ADMIN_IDS
 
 
-# ── Setup conversation ──────────────────────────────────────────────
+# ── /start ──────────────────────────────────────────────────────────
 
-async def setup_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not is_admin(user.id):
-        await update.message.reply_text("Access denied.")
-        return ConversationHandler.END
+        return
 
-    if await is_setup_complete():
-        await update.message.reply_text(
-            "Setup already done. Use /menu to open the panel.",
-            reply_markup=main_menu_keyboard(),
-        )
-        return ConversationHandler.END
+    target = await get_setting("target_channel") or "Not set"
+    sources = await get_source_channels()
+    tag = await get_setting("custom_tag") or "Not set"
 
-    await log_action(user.id, "setup_started")
-    await update.message.reply_text(
-        "Welcome to ContentForwardBot setup.\n\n"
-        "Step 1/4: Send me the Target Channel\n"
-        "(username like @channel or numeric ID)"
+    text = (
+        "ContentForwardBot\n\n"
+        f"Target: {target}\n"
+        f"Sources: {', '.join(sources) if sources else 'none'}\n"
+        f"Tag:\n{tag}\n\n"
+        "Commands:\n"
+        "/set_target - Set target channel\n"
+        "/add_source - Add source channel\n"
+        "/list_sources - List source channels\n"
+        "/set_tag - Change tag\n"
+        "/status - Bot status\n"
+        "/menu - Open panel"
     )
-    return SETUP_TARGET
+    await update.message.reply_text(text)
 
 
-async def setup_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# ── /set_target ─────────────────────────────────────────────────────
+
+async def set_target_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    current = await get_setting("target_channel") or "Not set"
+    await update.message.reply_text(
+        f"Current target: {current}\n\nSend the new Target Channel (username or ID)."
+    )
+    return SET_TARGET
+
+
+async def set_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
     text = update.message.text.strip()
     await set_setting("target_channel", text)
     await log_action(update.effective_user.id, f"target_set:{text}")
-    await update.message.reply_text(
-        f"Target channel set to: {text}\n\n"
-        "Step 2/4: Send me a Source Channel\n"
-        "(username or ID). You can add multiple."
-    )
-    return SETUP_SOURCE
+    await update.message.reply_text(f"Target set to: {text}")
+    return ConversationHandler.END
 
 
-async def setup_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# ── /add_source ─────────────────────────────────────────────────────
+
+async def add_source_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    await update.message.reply_text("Send the Source Channel (username or ID).")
+    return SET_SOURCE
+
+
+async def add_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
     text = update.message.text.strip()
     await add_source_channel(text)
-    await update.message.reply_text(
-        f"Source channel added: {text}\n\n"
-        "Add another source or press Done.",
-        reply_markup=setup_source_confirm_keyboard(),
-    )
-    return SETUP_SOURCE_CONFIRM
-
-
-async def setup_source_confirm_cb(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "setup_source_more":
-        await query.edit_message_text("Send me the next Source Channel (username or ID).")
-        return SETUP_SOURCE
-
+    await log_action(update.effective_user.id, f"source_added:{text}")
     sources = await get_source_channels()
-    await query.edit_message_text(
-        f"Sources saved: {', '.join(sources)}\n\n"
-        "Step 3/4: Send me Admin User IDs\n"
-        "(one per message, or comma-separated).\n"
-        "Send /done when finished."
+    await update.message.reply_text(
+        f"Source added: {text}\n\nCurrent sources:",
+        reply_markup=source_list_keyboard(sources),
     )
-    return SETUP_ADMINS
-
-
-async def setup_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text and update.message.text.strip() == "/done":
-        admins = await get_admins()
-        if not admins:
-            for aid in settings.ADMIN_IDS:
-                await add_admin(aid)
-            admins = await get_admins()
-
-        phone = settings.PHONE_NUMBER
-        masked = phone[:3] + "****" + phone[-2:] if len(phone) > 5 else "****"
-        await update.message.reply_text(
-            f"Admins confirmed: {len(admins)} total\n\n"
-            "Step 4/4: Confirm Pyrogram account\n"
-            f"Phone number from .env: {masked}\n\n"
-            "Press Confirm to finish setup.",
-            reply_markup=setup_source_confirm_keyboard(),
-        )
-        return SETUP_PHONE
-
-    text = update.message.text.strip()
-    parts = [p.strip() for p in text.split(",") if p.strip().isdigit()]
-    for uid in parts:
-        await add_admin(int(uid))
-
-    count = len(parts)
-    await update.message.reply_text(f"Added {count} admin(s). Send more or /done.")
-    return SETUP_ADMINS
-
-
-async def setup_phone_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "setup_source_done":
-        existing = await get_setting("custom_tag")
-        if not existing:
-            await set_setting("custom_tag", settings.DEFAULT_CUSTOM_TAG)
-        await set_setting("setup_complete", "true")
-        await log_action(update.effective_user.id, "setup_completed")
-        await query.edit_message_text(
-            "Setup complete! Bot is ready.\nUse the menu below.",
-        )
-        await query.message.reply_text(
-            "Main Menu", reply_markup=main_menu_keyboard()
-        )
-        return ConversationHandler.END
-
-    return SETUP_PHONE
-
-
-async def setup_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Setup cancelled. Run /start to begin again.")
     return ConversationHandler.END
 
 
-# ── Menu entry ──────────────────────────────────────────────────────
+# ── /list_sources ───────────────────────────────────────────────────
 
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-    if not is_admin(user.id):
-        await update.message.reply_text("Access denied.")
+async def list_sources_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(update.effective_user.id):
+        return
+    sources = await get_source_channels()
+    if not sources:
+        await update.message.reply_text("No source channels configured.")
+        return
+    text = "Source channels:\n\n"
+    for i, src in enumerate(sources, 1):
+        text += f"{i}. {src}\n"
+    await update.message.reply_text(text, reply_markup=source_list_keyboard(sources))
+
+
+# ── /set_tag ────────────────────────────────────────────────────────
+
+async def set_tag_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
         return ConversationHandler.END
+    current = await get_setting("custom_tag") or "Not set"
+    await update.message.reply_text(
+        f"Current tag:\n{current}\n\nSend the new custom tag."
+    )
+    return SET_TAG
 
-    if not await is_setup_complete():
-        await update.message.reply_text(
-            "Bot not set up yet. Run /start to begin setup."
-        )
+
+async def set_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
         return ConversationHandler.END
+    text = update.message.text
+    if text:
+        text = text.strip()
+    if not text:
+        await update.message.reply_text("Tag cannot be empty. Send a tag or /cancel.")
+        return SET_TAG
+    await set_setting("custom_tag", text)
+    await log_action(update.effective_user.id, "tag_changed")
+    await update.message.reply_text(f"Tag updated to:\n{text}")
+    return ConversationHandler.END
 
+
+# ── /menu ───────────────────────────────────────────────────────────
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(update.effective_user.id):
+        return
     await update.message.reply_text("Main Menu", reply_markup=main_menu_keyboard())
-    return ConversationHandler.END
 
 
-# ── Main menu callbacks ─────────────────────────────────────────────
+# ── Menu callbacks ──────────────────────────────────────────────────
 
 async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -225,13 +195,13 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             next_post = queue_items[0]["scheduled_time"]
 
     text = (
-        "📊 Bot Status\n\n"
+        "Bot Status\n\n"
         f"Target: {target}\n"
         f"Sources: {len(sources)} ({', '.join(sources) if sources else 'none'})\n"
         f"Admins: {len(admins)}\n"
         f"Queue: {len(queue_items)} items | Next: {next_post}\n"
         f"Pending messages: {pending_count}\n"
-        f"Custom Tag:\n{tag}\n"
+        f"Tag:\n{tag}\n"
     )
 
     if actions:
@@ -248,19 +218,7 @@ async def menu_add_source_entry(
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Send me the Source Channel (username or ID).")
-    return ADD_SOURCE
-
-
-async def add_source_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    await add_source_channel(text)
-    await log_action(update.effective_user.id, f"source_added:{text}")
-    sources = await get_source_channels()
-    await update.message.reply_text(
-        f"Source added: {text}\n\nCurrent sources:",
-        reply_markup=source_list_keyboard(sources),
-    )
-    return ConversationHandler.END
+    return SET_SOURCE
 
 
 async def menu_change_target_entry(
@@ -272,29 +230,18 @@ async def menu_change_target_entry(
     await query.edit_message_text(
         f"Current target: {current}\n\nSend me the new Target Channel (username or ID)."
     )
-    return CHANGE_TARGET
-
-
-async def change_target_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    await set_setting("target_channel", text)
-    await log_action(update.effective_user.id, f"target_changed:{text}")
-    await update.message.reply_text(
-        f"Target updated to: {text}", reply_markup=main_menu_keyboard()
-    )
-    return ConversationHandler.END
+    return SET_TARGET
 
 
 async def menu_manage_admins_entry(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
+) -> None:
     query = update.callback_query
     await query.answer()
     admins = await get_admins()
     await query.edit_message_text(
-        "👥 Manage Admins", reply_markup=admin_list_keyboard(admins)
+        "Manage Admins", reply_markup=admin_list_keyboard(admins)
     )
-    return ConversationHandler.END
 
 
 async def remove_admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -305,31 +252,14 @@ async def remove_admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await log_action(update.effective_user.id, f"admin_removed:{uid}")
     admins = await get_admins()
     await query.edit_message_text(
-        "👥 Manage Admins", reply_markup=admin_list_keyboard(admins)
+        "Manage Admins", reply_markup=admin_list_keyboard(admins)
     )
 
 
-async def add_admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def add_admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Send me the Admin User ID.")
-    return ADD_ADMIN
-
-
-async def add_admin_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    if not text.isdigit():
-        await update.message.reply_text("Invalid ID. Send a numeric user ID.")
-        return ADD_ADMIN
-
-    uid = int(text)
-    await add_admin(uid)
-    await log_action(update.effective_user.id, f"admin_added:{uid}")
-    admins = await get_admins()
-    await update.message.reply_text(
-        "👥 Manage Admins", reply_markup=admin_list_keyboard(admins)
-    )
-    return ConversationHandler.END
 
 
 async def menu_change_tag_entry(
@@ -341,22 +271,7 @@ async def menu_change_tag_entry(
     await query.edit_message_text(
         f"Current tag:\n{current}\n\nSend me the new custom tag (multi-line supported)."
     )
-    return CHANGE_TAG
-
-
-async def change_tag_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text
-    if text:
-        text = text.strip()
-    if not text:
-        await update.message.reply_text("Tag cannot be empty. Send a tag or /cancel.")
-        return CHANGE_TAG
-    await set_setting("custom_tag", text)
-    await log_action(update.effective_user.id, f"tag_changed")
-    await update.message.reply_text(
-        f"Tag updated to:\n{text}", reply_markup=main_menu_keyboard()
-    )
-    return ConversationHandler.END
+    return SET_TAG
 
 
 async def menu_view_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -365,10 +280,10 @@ async def menu_view_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     items = await get_active_queue_items()
     if not items:
         await query.edit_message_text(
-            "📋 Queue is empty.", reply_markup=back_to_menu_keyboard()
+            "Queue is empty.", reply_markup=back_to_menu_keyboard()
         )
         return
-    text = f"📋 Queue ({len(items)} items)\n\n"
+    text = f"Queue ({len(items)} items)\n\n"
     for i, item in enumerate(items, 1):
         ctype = item.get("content_type", "?")
         sched = item.get("scheduled_time", "?")
@@ -384,7 +299,7 @@ async def menu_view_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("⚙️ Settings", reply_markup=settings_keyboard())
+    await query.edit_message_text("Settings", reply_markup=back_to_menu_keyboard())
 
 
 async def back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -439,6 +354,7 @@ async def _handle_preview_action(
             f"This message was already {ACTION_LABELS.get(pending.get('status', ''), pending.get('status', 'acted on'))} by another admin.",
             show_alert=True,
         )
+        return
 
     await update_pending_status(pending_id, action, acted_by=user.id)
     await log_action(user.id, f"{action}:{pending_id}")

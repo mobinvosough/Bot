@@ -112,11 +112,9 @@ class QueueWorker:
         admins = await get_admins()
         for admin in admins:
             try:
-                await self._client.send_messages(
+                await self._client.send_message(
                     admin["user_id"],
-                    [
-                        f"Message #{pending_id} has been sent to {target} by the queue worker."
-                    ],
+                    f"Message #{pending_id} has been sent to {target} by the queue worker.",
                 )
             except Exception:
                 pass

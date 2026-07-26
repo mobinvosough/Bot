@@ -23,34 +23,25 @@ from core.pyrogram_client import PyrogramClient
 from core.queue_manager import QueueWorker
 import bot.handlers as handlers
 from bot.handlers import (
-    SETUP_TARGET,
-    SETUP_SOURCE,
-    SETUP_SOURCE_CONFIRM,
-    SETUP_ADMINS,
-    SETUP_PHONE,
-    ADD_SOURCE,
-    CHANGE_TARGET,
-    ADD_ADMIN,
-    CHANGE_TAG,
-    setup_start,
-    setup_target,
-    setup_source,
-    setup_source_confirm_cb,
-    setup_admins,
-    setup_phone_cb,
-    setup_cancel,
+    SET_TARGET,
+    SET_SOURCE,
+    SET_TAG,
+    start_command,
+    set_target_entry,
+    set_target_save,
+    add_source_entry,
+    add_source_save,
+    list_sources_command,
+    set_tag_entry,
+    set_tag_save,
     menu_command,
     menu_status,
     menu_add_source_entry,
-    add_source_save,
     menu_change_target_entry,
-    change_target_save,
     menu_manage_admins_entry,
     remove_admin_cb,
     add_admin_entry,
-    add_admin_save,
     menu_change_tag_entry,
-    change_tag_save,
     menu_view_queue,
     menu_settings,
     back_main,
@@ -65,109 +56,6 @@ from bot.keyboards import preview_keyboard
 
 pyrogram_client = PyrogramClient()
 queue_worker = QueueWorker(pyrogram_client.client)
-
-
-def build_app() -> Application:
-    app = Application.builder().token(settings.BOT_TOKEN).build()
-
-    setup_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", setup_start)],
-        states={
-            SETUP_TARGET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_target)
-            ],
-            SETUP_SOURCE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_source)
-            ],
-            SETUP_SOURCE_CONFIRM: [
-                CallbackQueryHandler(setup_source_confirm_cb, pattern=r"^setup_source_")
-            ],
-            SETUP_ADMINS: [
-                CommandHandler("done", setup_admins),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, setup_admins),
-            ],
-            SETUP_PHONE: [
-                CallbackQueryHandler(setup_phone_cb, pattern=r"^setup_source_done$")
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", setup_cancel),
-            CommandHandler("start", setup_start),
-        ],
-        allow_reentry=True,
-    )
-
-    menu_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("menu", menu_command),
-            CallbackQueryHandler(back_main, pattern=r"^back_main$"),
-        ],
-        states={
-            CHANGE_TARGET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, change_target_save)
-            ],
-            ADD_SOURCE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_save)
-            ],
-            ADD_ADMIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_save)
-            ],
-            CHANGE_TAG: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, change_tag_save)
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("start", setup_start),
-        ],
-        allow_reentry=True,
-    )
-
-    app.add_handler(setup_handler)
-    app.add_handler(menu_handler)
-
-    app.add_handler(CallbackQueryHandler(menu_status, pattern=r"^menu_status$"))
-    app.add_handler(
-        CallbackQueryHandler(menu_add_source_entry, pattern=r"^menu_add_source$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_change_target_entry, pattern=r"^menu_change_target$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_manage_admins_entry, pattern=r"^menu_manage_admins$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_change_tag_entry, pattern=r"^menu_change_tag$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_view_queue, pattern=r"^menu_view_queue$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_settings, pattern=r"^menu_settings$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(remove_admin_cb, pattern=r"^remove_admin:")
-    )
-    app.add_handler(
-        CallbackQueryHandler(add_admin_entry, pattern=r"^add_admin$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:")
-    )
-    app.add_handler(
-        CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:")
-    )
-    app.add_handler(
-        CallbackQueryHandler(preview_send_now, pattern=r"^preview_send:")
-    )
-    app.add_handler(
-        CallbackQueryHandler(preview_reject, pattern=r"^preview_reject:")
-    )
-    app.add_handler(
-        CallbackQueryHandler(cancel_queue_cb, pattern=r"^cancel_queue:")
-    )
-
-    return app
 
 
 def make_send_preview(bot: Bot):
@@ -215,33 +103,103 @@ def make_send_preview(bot: Bot):
     return send_preview
 
 
+def build_app() -> Application:
+    app = Application.builder().token(settings.BOT_TOKEN).build()
+
+    target_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_target", set_target_entry),
+            CallbackQueryHandler(menu_change_target_entry, pattern=r"^menu_change_target$"),
+        ],
+        states={
+            SET_TARGET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_target_save)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    source_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("add_source", add_source_entry),
+            CallbackQueryHandler(menu_add_source_entry, pattern=r"^menu_add_source$"),
+        ],
+        states={
+            SET_SOURCE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_save)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    tag_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_tag", set_tag_entry),
+            CallbackQueryHandler(menu_change_tag_entry, pattern=r"^menu_change_tag$"),
+        ],
+        states={
+            SET_TAG: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_tag_save)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("status", menu_status))
+    app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("list_sources", list_sources_command))
+
+    app.add_handler(target_handler)
+    app.add_handler(source_handler)
+    app.add_handler(tag_handler)
+
+    app.add_handler(CallbackQueryHandler(menu_status, pattern=r"^menu_status$"))
+    app.add_handler(CallbackQueryHandler(menu_manage_admins_entry, pattern=r"^menu_manage_admins$"))
+    app.add_handler(CallbackQueryHandler(menu_view_queue, pattern=r"^menu_view_queue$"))
+    app.add_handler(CallbackQueryHandler(menu_settings, pattern=r"^menu_settings$"))
+    app.add_handler(CallbackQueryHandler(remove_admin_cb, pattern=r"^remove_admin:"))
+    app.add_handler(CallbackQueryHandler(add_admin_entry, pattern=r"^add_admin$"))
+    app.add_handler(CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:"))
+    app.add_handler(CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:"))
+    app.add_handler(CallbackQueryHandler(preview_send_now, pattern=r"^preview_send:"))
+    app.add_handler(CallbackQueryHandler(preview_reject, pattern=r"^preview_reject:"))
+    app.add_handler(CallbackQueryHandler(cancel_queue_cb, pattern=r"^cancel_queue:"))
+    app.add_handler(CallbackQueryHandler(back_main, pattern=r"^back_main$"))
+
+    return app
+
+
 async def main():
     setup_logger()
     logger.info("Starting ContentForwardBot...")
 
     await get_db()
 
+    try:
+        await pyrogram_client.start()
+        logger.info("Pyrogram client connected")
+    except Exception:
+        logger.warning("Pyrogram failed to connect. SourceWatcher disabled.")
+
     app = build_app()
+    send_preview = make_send_preview(app.bot)
+    handlers.pyrogram_client = pyrogram_client
+
+    if pyrogram_client.watcher is None and pyrogram_client.client.is_connected:
+        from core.pyrogram_client import SourceWatcher
+        pyrogram_client.watcher = SourceWatcher(pyrogram_client.client, send_preview)
+        await pyrogram_client.watcher.start()
+
     logger.info("Bot polling starting...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
 
-    send_preview = make_send_preview(app.bot)
-    handlers.pyrogram_client = pyrogram_client
-
-    async def _start_pyrogram():
-        try:
-            await pyrogram_client.start(send_preview)
-        except Exception:
-            logger.exception("Pyrogram client failed to start. SourceWatcher disabled. Run 'python login.py' to re-authenticate.")
-
-    pyro_task = asyncio.create_task(_start_pyrogram())
-
-    try:
-        await queue_worker.start()
-    except Exception:
-        logger.exception("QueueWorker failed to start")
+    await queue_worker.start()
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
 
