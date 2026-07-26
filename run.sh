@@ -31,23 +31,14 @@ echo "Installing dependencies..."
 pip install -r requirements.txt tgcrypto
 
 if [ ! -f ".env" ]; then
+    cp .env.example .env
     echo ""
     echo "=== First-time setup ==="
-    echo "Enter your bot credentials:"
-    read -rp "BOT_TOKEN: " BOT_TOKEN
-    read -rp "API_ID: " API_ID
-    read -rp "API_HASH: " API_HASH
-    read -rp "PHONE_NUMBER (e.g. +1234567890): " PHONE_NUMBER
-    read -rp "ADMIN_IDS (comma separated): " ADMIN_IDS
-
-    cat > .env <<EOF
-BOT_TOKEN=$BOT_TOKEN
-API_ID=$API_ID
-API_HASH=$API_HASH
-PHONE_NUMBER=$PHONE_NUMBER
-ADMIN_IDS=$ADMIN_IDS
-EOF
-    echo ".env created."
+    echo "Edit ~/Bot/.env with your credentials:"
+    echo "  nano ~/Bot/.env"
+    echo ""
+    echo "Then run this script again."
+    exit 0
 fi
 
 if [ ! -f "content_forward_bot.session" ]; then
