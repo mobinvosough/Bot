@@ -1,4 +1,4 @@
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -26,7 +26,6 @@ from core.database import (
     update_pending_status,
     get_last_queue_time,
     add_to_queue,
-    get_admin_username,
     get_active_queue_items,
     cancel_queue_item,
     count_pending,
@@ -419,28 +418,6 @@ ACTION_LABELS = {
 }
 
 
-async def _notify_other_admins(
-    bot: Bot,
-    acting_user_id: int,
-    pending_id: int,
-    action: str,
-):
-    admins = await get_admins()
-    acting_name = await get_admin_username(acting_user_id)
-    label = ACTION_LABELS.get(action, action)
-    for admin in admins:
-        uid = admin["user_id"]
-        if uid == acting_user_id:
-            continue
-        try:
-            await bot.send_message(
-                chat_id=uid,
-                text=f"Message #{pending_id} was {label} by {acting_name}.",
-            )
-        except Exception:
-            logger.exception("Failed to notify admin {}", uid)
-
-
 async def _handle_preview_action(
     update: Update,
     pending_id: int,
@@ -458,12 +435,8 @@ async def _handle_preview_action(
     previous_acted_by = pending.get("acted_by")
 
     if previous_acted_by and previous_acted_by != user.id:
-        prev_name = await get_admin_username(previous_acted_by)
-        prev_action = pending.get("status", "unknown")
-        prev_label = ACTION_LABELS.get(prev_action, prev_action)
         await query.answer(
-            f"This message was already {prev_label} by {prev_name}. "
-            f"Your action ({acting_label}) will override.",
+            f"This message was already {ACTION_LABELS.get(pending.get('status', ''), pending.get('status', 'acted on'))} by another admin.",
             show_alert=True,
         )
 
@@ -474,8 +447,6 @@ async def _handle_preview_action(
     await query.message.reply_text(
         f"Message #{pending_id}: {acting_label} by you."
     )
-
-    await _notify_other_admins(query.bot, user.id, pending_id, action)
 
 
 async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
