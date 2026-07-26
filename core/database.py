@@ -294,3 +294,64 @@ async def cancel_queue_item(queue_id: int) -> bool:
     )
     await db.commit()
     return cursor.rowcount > 0
+
+
+async def get_clean_stats() -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id FROM pending_messages WHERE status IN ('sent', 'rejected') "
+        "ORDER BY id DESC LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    last_anchor = row["id"] if row else 0
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM pending_messages WHERE id < ? AND status = 'pending'",
+        (last_anchor,),
+    )
+    pending_count = (await cursor.fetchone())["cnt"]
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM pending_messages WHERE id < ? AND status = 'rejected'",
+        (last_anchor,),
+    )
+    rejected_count = (await cursor.fetchone())["cnt"]
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM queue WHERE pending_id < ? AND status IN ('pending', 'cancelled', 'failed')",
+        (last_anchor,),
+    )
+    queue_count = (await cursor.fetchone())["cnt"]
+
+    return {
+        "last_anchor": last_anchor,
+        "pending": pending_count,
+        "rejected": rejected_count,
+        "queue": queue_count,
+        "total": pending_count + rejected_count + queue_count,
+    }
+
+
+async def clean_old_messages() -> dict:
+    stats = await get_clean_stats()
+    if stats["total"] == 0:
+        return {"deleted": 0}
+
+    anchor = stats["last_anchor"]
+    db = await get_db()
+
+    await db.execute(
+        "DELETE FROM queue WHERE pending_id < ? AND status IN ('pending', 'cancelled', 'failed')",
+        (anchor,),
+    )
+    await db.execute(
+        "DELETE FROM pending_messages WHERE id < ? AND status IN ('pending', 'rejected')",
+        (anchor,),
+    )
+    await db.commit()
+
+    logger.info(
+        "Cleaned {} old messages (pending={}, rejected={}, queue={})",
+        stats["total"], stats["pending"], stats["rejected"], stats["queue"],
+    )
+    return stats

@@ -57,6 +57,8 @@ from bot.handlers import (
     menu_tag,
     menu_queue,
     menu_settings,
+    menu_clean,
+    confirm_clean,
     back_main,
     remove_admin_cb,
     remove_source_cb,
@@ -311,6 +313,8 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(menu_admins, pattern=r"^menu_admins$"))
     app.add_handler(CallbackQueryHandler(menu_queue, pattern=r"^menu_queue$"))
     app.add_handler(CallbackQueryHandler(menu_settings, pattern=r"^menu_settings$"))
+    app.add_handler(CallbackQueryHandler(menu_clean, pattern=r"^menu_clean$"))
+    app.add_handler(CallbackQueryHandler(confirm_clean, pattern=r"^confirm_clean$"))
     app.add_handler(CallbackQueryHandler(remove_admin_cb, pattern=r"^remove_admin:"))
     app.add_handler(CallbackQueryHandler(remove_source_cb, pattern=r"^remove_source:"))
     app.add_handler(CallbackQueryHandler(preview_add_queue, pattern=r"^preview_queue:"))

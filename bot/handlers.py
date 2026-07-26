@@ -31,6 +31,8 @@ from core.database import (
     count_pending,
     get_recent_actions,
     is_setup_complete,
+    get_clean_stats,
+    clean_old_messages,
 )
 from utils.cleaner import clean_and_tag
 from bot.keyboards import (
@@ -42,6 +44,7 @@ from bot.keyboards import (
     queue_list_keyboard,
     cancel_keyboard,
     setup_target_keyboard,
+    clean_confirm_keyboard,
 )
 
 pyrogram_client = None
@@ -398,6 +401,50 @@ async def menu_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def menu_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    stats = await get_clean_stats()
+
+    if stats["total"] == 0:
+        await query.edit_message_text(
+            "🧹 Clean Database\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Nothing to clean. Database is already tidy.",
+            reply_markup=back_to_menu_keyboard(),
+        )
+        return
+
+    text = (
+        "🧹 Clean Database\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"This will remove all old messages before the last accepted post.\n\n"
+        f"🗑 Pending: {stats['pending']}\n"
+        f"🗑 Rejected: {stats['rejected']}\n"
+        f"🗑 Queue (old): {stats['queue']}\n"
+        f"📊 Total: {stats['total']} items\n\n"
+        "⚠️ This cannot be undone. Continue?"
+    )
+    await query.edit_message_text(text, reply_markup=clean_confirm_keyboard())
+
+
+async def confirm_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    await query.answer("Cleaning...")
+
+    stats = await clean_old_messages()
+    await log_action(user.id, f"clean_db:{stats.get('total', 0)}")
+
+    await query.edit_message_text(
+        "🧹 Clean Complete\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Removed {stats.get('total', 0)} old items from database.\n\n"
+        "✅ Database is now clean.",
+        reply_markup=back_to_menu_keyboard(),
+    )
+
+
 # ── Navigation callbacks ────────────────────────────────────────────
 
 
@@ -489,7 +536,14 @@ async def preview_add_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     pending = await get_pending_by_id(pending_id)
     if not pending:
-        await query.answer("Message not found.", show_alert=True)
+        await query.answer(
+            "⚠️ This message has been cleaned from the database and is no longer available.",
+            show_alert=True,
+        )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return
 
     previous_status = pending.get("status")
@@ -532,7 +586,14 @@ async def preview_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     pending = await get_pending_by_id(pending_id)
     if not pending:
-        await query.answer("Message not found.", show_alert=True)
+        await query.answer(
+            "⚠️ This message has been cleaned from the database and is no longer available.",
+            show_alert=True,
+        )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return
 
     previous_status = pending.get("status")
@@ -614,7 +675,14 @@ async def preview_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     pending = await get_pending_by_id(pending_id)
     if not pending:
-        await query.answer("Message not found.", show_alert=True)
+        await query.answer(
+            "⚠️ This message has been cleaned from the database and is no longer available.",
+            show_alert=True,
+        )
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return
 
     previous_status = pending.get("status")

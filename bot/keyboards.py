@@ -17,6 +17,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📋 Queue", callback_data="menu_queue"),
         ],
         [
+            InlineKeyboardButton("🧹 Clean DB", callback_data="menu_clean"),
             InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
         ],
     ])
@@ -82,4 +83,13 @@ def queue_list_keyboard(items: list[dict]) -> InlineKeyboardMarkup:
 def setup_target_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚫 Cancel Setup", callback_data="conv_cancel")],
+    ])
+
+
+def clean_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Yes, Clean", callback_data="confirm_clean"),
+            InlineKeyboardButton("❌ No", callback_data="back_main"),
+        ],
     ])
