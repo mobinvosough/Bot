@@ -42,9 +42,27 @@ _EMOJI_RE = re.compile(
     re.UNICODE,
 )
 
+# Invisible/zero-width characters that survive emoji stripping
+_INVISIBLE_RE = re.compile(
+    "[\u200B\u200C\u200D\u200E\u200F"
+    "\u202A-\u202E"
+    "\u2060-\u206F"
+    "\uFEFF"
+    "\u00AD"
+    "\u180E"
+    "]+",
+    re.UNICODE,
+)
+
+# Static text patterns to remove from messages
+_STATIC_REMOVE_RE = re.compile(
+    r"^\s*پروکسی متصل\s*📲?\s*$",
+    re.UNICODE,
+)
+
 
 def _strip_emoji(text: str) -> str:
-    return _EMOJI_RE.sub("", text).strip()
+    return _INVISIBLE_RE.sub("", _EMOJI_RE.sub("", text)).strip()
 
 
 def _is_tag_line(line: str) -> bool:
@@ -116,7 +134,7 @@ def clean_text(text: str | None) -> str | None:
     if not text:
         return text
     lines = text.splitlines()
-    cleaned = [line for line in lines if not _is_tag_line(line)]
+    cleaned = [line for line in lines if not _is_tag_line(line) and not _STATIC_REMOVE_RE.match(line)]
     result = "\n".join(cleaned).strip()
     return result if result else None
 
