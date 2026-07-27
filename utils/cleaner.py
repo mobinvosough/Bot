@@ -56,7 +56,7 @@ _INVISIBLE_RE = re.compile(
 
 # Static text patterns to remove from messages
 _STATIC_REMOVE_RE = re.compile(
-    r"^\s*پروکسی متصل\s*📲?\s*$",
+    r"^\s*پروکسی متصل\s*\S*\s*$",
     re.UNICODE,
 )
 
